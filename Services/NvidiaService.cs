@@ -1,3 +1,4 @@
+using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
@@ -43,7 +44,7 @@ public class NvidiaService : IAiService
         var payload = new
         {
             model = _options.VisionModel,
-            messages = new[]
+            messages = new object[]
             {
                 new
                 {
@@ -53,7 +54,7 @@ public class NvidiaService : IAiService
                 new
                 {
                     role = "user",
-                    content = (object)new object[]
+                    content = new object[]
                     {
                         new { type = "text", text = userPrompt },
                         new
@@ -84,7 +85,7 @@ public class NvidiaService : IAiService
         var payload = new
         {
             model = _options.VisionModel,
-            messages = new[]
+            messages = new object[]
             {
                 new
                 {
@@ -94,7 +95,7 @@ public class NvidiaService : IAiService
                 new
                 {
                     role = "user",
-                    content = (object)new object[]
+                    content = new object[]
                     {
                         new { type = "text", text = userPrompt },
                         new
@@ -171,6 +172,8 @@ public class NvidiaService : IAiService
             {
                 var jsonPayload = JsonSerializer.Serialize(payload);
                 var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
+                // NVIDIA API requires exactly "application/json" without charset parameter
+                content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
 
                 _logger.LogInformation("Chamando API NVIDIA: {Url} (tentativa {Attempt}/{MaxRetries})", apiUrl, attempt + 1, MaxRetries);
 
