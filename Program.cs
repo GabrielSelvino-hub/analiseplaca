@@ -1,11 +1,38 @@
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.DependencyInjection;
 using PlateAnalysisApi.Configuration;
 using PlateAnalysisApi.Models;
 using PlateAnalysisApi.Services;
 using System.Linq;
 using System.Text.Json;
+using Serilog;
+
+// Configuração do Serilog para salvar logs na pasta "Log"
+var logPath = Path.Combine(Directory.GetCurrentDirectory(), "Log", "app-.log");
+var logDirectory = Path.GetDirectoryName(logPath);
+if (!string.IsNullOrEmpty(logDirectory) && !Directory.Exists(logDirectory))
+{
+    Directory.CreateDirectory(logDirectory);
+}
+
+Log.Logger = new LoggerConfiguration()
+    .WriteTo.File(
+        path: logPath,
+        rollingInterval: RollingInterval.Day,
+        retainedFileCountLimit: 30,
+        outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {Message:lj}{NewLine}{Exception}",
+        shared: true,
+        flushToDiskInterval: TimeSpan.FromSeconds(1))
+    .MinimumLevel.Information()
+    .MinimumLevel.Override("Microsoft", Serilog.Events.LogEventLevel.Warning)
+    .MinimumLevel.Override("Microsoft.AspNetCore", Serilog.Events.LogEventLevel.Warning)
+    .CreateLogger();
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Configura o Serilog como provider de logging
+builder.Host.UseSerilog();
 
 // Configuração JSON
 builder.Services.ConfigureHttpJsonOptions(options =>
@@ -109,7 +136,7 @@ async Task<IResult> ProcessPlateAnalysis(
     IAiService aiService,
     PlateCacheService cacheService,
     string apiUtilizada,
-    ILogger logger)
+    Microsoft.Extensions.Logging.ILogger logger)
 {
     try
     {
@@ -319,5 +346,18 @@ app.MapGet("/", async (HttpContext context) =>
 })
 .WithName("Index");
 
-app.Run();
+// Log de inicialização da aplicação
+var logger = app.Services.GetRequiredService<ILogger<Program>>();
+logger.LogInformation("=== Aplicação iniciada em {Timestamp} ===", DateTime.UtcNow);
+logger.LogInformation("Diretório de logs: {LogDirectory}", logDirectory);
+
+try
+{
+    app.Run();
+}
+finally
+{
+    logger.LogInformation("=== Aplicação encerrada em {Timestamp} ===", DateTime.UtcNow);
+    Log.CloseAndFlush();
+}
 
