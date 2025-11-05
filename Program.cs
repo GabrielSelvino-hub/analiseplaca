@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Options;
 using PlateAnalysisApi.Configuration;
 using PlateAnalysisApi.Models;
 using PlateAnalysisApi.Services;
@@ -13,12 +14,16 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 });
 
 // Configuração
+builder.Services.Configure<NvidiaOptions>(
+    builder.Configuration.GetSection(NvidiaOptions.SectionName));
 builder.Services.Configure<GeminiOptions>(
     builder.Configuration.GetSection(GeminiOptions.SectionName));
 
-// Serviços
+// Serviços - Registra ambos os serviços
+builder.Services.AddHttpClient<NvidiaService>();
 builder.Services.AddHttpClient<GeminiService>();
 builder.Services.AddSingleton<PlateCacheService>();
+builder.Services.AddSingleton<NvidiaService>();
 builder.Services.AddSingleton<GeminiService>();
 
 // CORS
@@ -33,6 +38,9 @@ builder.Services.AddCors(options =>
 });
 
 var app = builder.Build();
+
+// Configurar arquivos estáticos
+app.UseStaticFiles();
 
 app.UseCors();
 
@@ -95,10 +103,13 @@ bool IsValidMimeType(string? mimeType)
     return validTypes.Contains(mimeType.ToLowerInvariant());
 }
 
-app.MapPost("/api/analyze-plate", async (PlateAnalysisRequest request, 
-    GeminiService geminiService, 
-    PlateCacheService cacheService, 
-    ILogger<Program> logger) =>
+// Método auxiliar para processar análise de placa
+async Task<IResult> ProcessPlateAnalysis(
+    PlateAnalysisRequest request,
+    IAiService aiService,
+    PlateCacheService cacheService,
+    string apiUtilizada,
+    ILogger logger)
 {
     try
     {
@@ -107,7 +118,8 @@ app.MapPost("/api/analyze-plate", async (PlateAnalysisRequest request,
         {
             return Results.BadRequest(new PlateAnalysisResponse
             {
-                Erro = "A imagem em base64 é obrigatória."
+                Erro = "A imagem em base64 é obrigatória.",
+                ApiUtilizada = apiUtilizada
             });
         }
 
@@ -115,7 +127,8 @@ app.MapPost("/api/analyze-plate", async (PlateAnalysisRequest request,
         {
             return Results.BadRequest(new PlateAnalysisResponse
             {
-                Erro = "O formato da imagem em base64 é inválido."
+                Erro = "O formato da imagem em base64 é inválido.",
+                ApiUtilizada = apiUtilizada
             });
         }
 
@@ -123,7 +136,8 @@ app.MapPost("/api/analyze-plate", async (PlateAnalysisRequest request,
         {
             return Results.BadRequest(new PlateAnalysisResponse
             {
-                Erro = $"O tipo MIME '{request.MimeType}' não é suportado. Use: image/jpeg, image/png, image/gif ou image/webp."
+                Erro = $"O tipo MIME '{request.MimeType}' não é suportado. Use: image/jpeg, image/png, image/gif ou image/webp.",
+                ApiUtilizada = apiUtilizada
             });
         }
 
@@ -136,7 +150,24 @@ app.MapPost("/api/analyze-plate", async (PlateAnalysisRequest request,
 
         try
         {
-            var plateJson = await geminiService.GetPlateTextAsync(normalizedBase64, mimeType);
+            var plateJson = await aiService.GetPlateTextAsync(normalizedBase64, mimeType);
+            
+            // Limpa a resposta removendo markdown code blocks se existirem (principalmente para NVIDIA)
+            plateJson = plateJson.Trim();
+            if (plateJson.StartsWith("```json"))
+            {
+                plateJson = plateJson.Substring(7);
+            }
+            if (plateJson.StartsWith("```"))
+            {
+                plateJson = plateJson.Substring(3);
+            }
+            if (plateJson.EndsWith("```"))
+            {
+                plateJson = plateJson.Substring(0, plateJson.Length - 3);
+            }
+            plateJson = plateJson.Trim();
+            
             var jsonOptions = new JsonSerializerOptions
             {
                 PropertyNameCaseInsensitive = true
@@ -147,10 +178,15 @@ app.MapPost("/api/analyze-plate", async (PlateAnalysisRequest request,
         catch (Exception ex)
         {
             logger.LogError(ex, "Erro na extração da placa (OCR)");
-            plateText = "Erro de Processamento.";
+            var errorMessage = ex is HttpRequestException httpEx ? httpEx.Message : ex.ToString();
+            return Results.BadRequest(new PlateAnalysisResponse
+            {
+                Erro = errorMessage,
+                ApiUtilizada = apiUtilizada
+            });
         }
 
-        var plateFound = plateText != "Placa não encontrada" && plateText != "Erro de Processamento.";
+        var plateFound = plateText != "Placa não encontrada";
 
         // Verificação de duplicatas
         if (plateFound && cacheService.IsDuplicate(plateText))
@@ -160,7 +196,8 @@ app.MapPost("/api/analyze-plate", async (PlateAnalysisRequest request,
             {
                 Placa = plateText,
                 Duplicada = true,
-                Erro = $"Atenção: A placa \"{plateText}\" já foi processada nesta sessão. O processamento foi interrompido."
+                Erro = $"Atenção: A placa \"{plateText}\" já foi processada nesta sessão. O processamento foi interrompido.",
+                ApiUtilizada = apiUtilizada
             });
         }
 
@@ -179,54 +216,47 @@ app.MapPost("/api/analyze-plate", async (PlateAnalysisRequest request,
             try
             {
                 logger.LogInformation("Analisando detalhes do veículo para placa: {Plate}", plateText);
-                vehicleDetails = await geminiService.GetVehicleDetailsAsync(normalizedBase64, mimeType, plateText);
+                vehicleDetails = await aiService.GetVehicleDetailsAsync(normalizedBase64, mimeType, plateText);
             }
             catch (Exception ex)
             {
                 logger.LogError(ex, "Erro na análise dos detalhes do veículo");
-                // Continua mesmo se falhar, mas não retorna detalhes
+                var errorMessage = ex is HttpRequestException httpEx ? httpEx.Message : ex.ToString();
+                return Results.BadRequest(new PlateAnalysisResponse
+                {
+                    Placa = plateText,
+                    Erro = errorMessage,
+                    ApiUtilizada = apiUtilizada
+                });
             }
         }
-
+        var erroRecorte = string.Empty;
         // PASSO 3: Recorte da imagem da placa
-        // COMENTADO: Recorte de imagem desabilitado pois a API gratuita não suporta
-        // A chamada à API de recorte foi comentada para evitar erros de quota
-        // if (plateFound)
-        // {
-        //     logger.LogInformation("Recortando imagem da placa: {Plate}", plateText);
-        //     var (croppedBase64, croppedMimeType, errorMsg) = await geminiService.CropPlateImageAsync(normalizedBase64, mimeType, plateText);
-        //     
-        //     if (errorMsg != null)
-        //     {
-        //         logger.LogWarning("Não foi possível recortar imagem: {Error}", errorMsg);
-        //         erroRecorte = errorMsg;
-        //     }
-        //     else if (croppedBase64 != null)
-        //     {
-        //         croppedImage = new CroppedPlateImage
-        //         {
-        //             Base64 = croppedBase64,
-        //             MimeType = croppedMimeType ?? mimeType
-        //         };
-        //         logger.LogInformation("Imagem da placa recortada com sucesso");
-        //     }
-        //     else
-        //     {
-        //         logger.LogWarning("Recorte de imagem retornou null sem mensagem de erro");
-        //         erroRecorte = "Não foi possível recortar a imagem da placa.";
-        //     }
-        // }
-        
-        // Define mensagem informativa no campo imagemPlacaRecortada quando o recorte não está disponível
-        if (plateFound)
-        {
-            croppedImage = new CroppedPlateImage
-            {
-                Base64 = null,
-                MimeType = null,
-                Mensagem = "API Gratuita não pode fazer recorte de placa, apenas análise. O recorte de imagem requer um plano pago da API do Google Gemini."
-            };
-        }
+         if (plateFound)
+         {
+             logger.LogInformation("Recortando imagem da placa: {Plate}", plateText);
+             var (croppedBase64, croppedMimeType, errorMsg) = await aiService.CropPlateImageAsync(normalizedBase64, mimeType, plateText);
+             
+             if (errorMsg != null)
+             {
+                 logger.LogWarning("Não foi possível recortar imagem: {Error}", errorMsg);
+                 erroRecorte = errorMsg;
+             }
+             else if (croppedBase64 != null)
+             {
+                 croppedImage = new CroppedPlateImage
+                 {
+                     Base64 = croppedBase64,
+                     MimeType = croppedMimeType ?? mimeType
+                 };
+                 logger.LogInformation("Imagem da placa recortada com sucesso");
+             }
+             else
+             {
+                 logger.LogWarning("Recorte de imagem retornou null sem mensagem de erro");
+                 erroRecorte = "Não foi possível recortar a imagem da placa.";
+             }
+         }
 
         // Monta resposta
         var response = new PlateAnalysisResponse
@@ -235,7 +265,8 @@ app.MapPost("/api/analyze-plate", async (PlateAnalysisRequest request,
             Duplicada = false,
             DetalhesVeiculo = vehicleDetails,
             ImagemPlacaRecortada = croppedImage,
-            Erro = null // Campo erro apenas para erros reais de processamento
+            Erro = erroRecorte, // Campo erro apenas para erros reais de processamento
+            ApiUtilizada = apiUtilizada
         };
 
         return Results.Ok(response);
@@ -243,14 +274,50 @@ app.MapPost("/api/analyze-plate", async (PlateAnalysisRequest request,
     catch (Exception ex)
     {
         logger.LogError(ex, "Erro geral no processamento da análise de placa");
-        return Results.StatusCode(500);
+        var errorMessage = ex is HttpRequestException httpEx ? httpEx.Message : ex.ToString();
+        return Results.BadRequest(new PlateAnalysisResponse
+        {
+            Erro = errorMessage,
+            ApiUtilizada = apiUtilizada
+        });
     }
+}
+
+// Rota para Gemini
+app.MapPost("/gemini/analyze-plate", async (PlateAnalysisRequest request,
+    GeminiService geminiService,
+    PlateCacheService cacheService,
+    ILogger<Program> logger) =>
+{
+    return await ProcessPlateAnalysis(request, geminiService, cacheService, "Gemini", logger);
 })
-.WithName("AnalyzePlate");
+.WithName("AnalyzePlateGemini");
+
+// Rota para Nvidia
+app.MapPost("/nvidia/analyze-plate", async (PlateAnalysisRequest request,
+    NvidiaService nvidiaService,
+    PlateCacheService cacheService,
+    ILogger<Program> logger) =>
+{
+    return await ProcessPlateAnalysis(request, nvidiaService, cacheService, "NVIDIA", logger);
+})
+.WithName("AnalyzePlateNvidia");
 
 // Endpoint de health check
 app.MapGet("/health", () => Results.Ok(new { status = "healthy", timestamp = DateTime.UtcNow }))
     .WithName("HealthCheck");
+
+// Endpoint para servir a página de teste (fallback se não for encontrado em wwwroot)
+app.MapGet("/", async (HttpContext context) =>
+{
+    var filePath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "index.html");
+    if (File.Exists(filePath))
+    {
+        return Results.File(filePath, "text/html");
+    }
+    return Results.NotFound("Página não encontrada");
+})
+.WithName("Index");
 
 app.Run();
 

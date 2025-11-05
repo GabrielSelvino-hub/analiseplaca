@@ -1,6 +1,6 @@
 # API .NET 8 - Análise de Placas Veiculares
 
-API REST desenvolvida em .NET 8 para análise automática de placas veiculares usando inteligência artificial do Google Gemini. A API realiza OCR (reconhecimento óptico de caracteres) para extrair o número da placa, analisa características do veículo (cor, tipo, marca, fabricante) e identifica o formato da placa (Brasil ou Mercosul).
+API REST desenvolvida em .NET 8 para análise automática de placas veiculares usando inteligência artificial da NVIDIA. A API realiza OCR (reconhecimento óptico de caracteres) para extrair o número da placa, analisa características do veículo (cor, tipo, marca, fabricante) e identifica o formato da placa (Brasil ou Mercosul).
 
 ## 📋 Índice
 
@@ -20,7 +20,7 @@ API REST desenvolvida em .NET 8 para análise automática de placas veiculares u
 
 ## 🚀 Funcionalidades
 
-- **OCR de Placas**: Extração automática do número da placa veicular usando Google Gemini AI
+- **OCR de Placas**: Extração automática do número da placa veicular usando NVIDIA NIM API
 - **Análise de Veículos**: Identificação de cor, tipo, marca e fabricante do veículo
 - **Detecção de Formato**: Identificação se a placa é do formato brasileiro tradicional ou Mercosul
 - **Prevenção de Duplicatas**: Sistema de cache em memória para evitar processamento duplicado
@@ -31,7 +31,7 @@ API REST desenvolvida em .NET 8 para análise automática de placas veiculares u
 ## 📦 Requisitos
 
 - **.NET 8 SDK** ou superior
-- **API Key do Google Gemini** (obtenha em [Google AI Studio](https://makersuite.google.com/app/apikey))
+- **API Key da NVIDIA** (obtenha em [NVIDIA AI Foundation Models](https://build.nvidia.com/))
 - **Windows, Linux ou macOS**
 
 ## 🔧 Instalação
@@ -50,7 +50,11 @@ dotnet restore
 
 ## ⚙️ Configuração
 
-1. Edite o arquivo `appsettings.json` e configure sua API Key do Google Gemini:
+A API suporta dois provedores de IA: **NVIDIA** e **Google Gemini**. Você pode escolher qual usar através da configuração no `appsettings.json`.
+
+### 1. Escolha do Provedor
+
+Edite o arquivo `appsettings.json` e configure o provedor desejado:
 
 ```json
 {
@@ -61,8 +65,17 @@ dotnet restore
     }
   },
   "AllowedHosts": "*",
+  "AiProvider": {
+    "Provider": "Nvidia"
+  },
+  "Nvidia": {
+    "ApiKey": "SUA_API_KEY_NVIDIA",
+    "TextModel": "meta/llama-3.1-8b-instruct",
+    "VisionModel": "meta/llama-3.1-70b-instruct",
+    "BaseUrl": "https://integrate.api.nvidia.com/v1"
+  },
   "Gemini": {
-    "ApiKey": "SUA_API_KEY_AQUI",
+    "ApiKey": "SUA_API_KEY_GEMINI",
     "TextModel": "gemini-2.5-flash-preview-09-2025",
     "ImageModel": "gemini-2.5-flash-image-preview",
     "BaseUrl": "https://generativelanguage.googleapis.com/v1beta/models"
@@ -70,27 +83,78 @@ dotnet restore
 }
 ```
 
+**Valores aceitos para `AiProvider.Provider`:**
+- `"Nvidia"` - Usa a API NVIDIA (padrão)
+- `"Gemini"` - Usa a API Google Gemini
+
+### 2. Configuração da API NVIDIA
+
+#### Como obter a API Key da NVIDIA
+
+1. Acesse [NVIDIA AI Foundation Models](https://build.nvidia.com/)
+2. Crie uma conta ou faça login
+3. Navegue até a seção de API Keys
+4. Gere uma nova API Key
+5. Copie a chave e cole no campo `Nvidia.ApiKey` do `appsettings.json`
+
+### 3. Configuração da API Google Gemini
+
+#### Como obter a API Key do Google Gemini
+
+1. Acesse [Google AI Studio](https://makersuite.google.com/app/apikey)
+2. Crie uma conta ou faça login
+3. Gere uma nova API Key
+4. Copie a chave e cole no campo `Gemini.ApiKey` do `appsettings.json`
+
+**Nota:** Você precisa configurar apenas a API Key do provedor que deseja usar. O outro pode ficar vazio, mas é recomendado configurar ambos para facilitar a troca entre provedores.
+
 ### Configuração Avançada
 
 Você também pode configurar via variáveis de ambiente:
 
 ```bash
 # Windows PowerShell
-$env:Gemini__ApiKey="SUA_API_KEY_AQUI"
+# Escolher provedor
+$env:AiProvider__Provider="Nvidia"  # ou "Gemini"
+
+# Configurar API Keys
+$env:Nvidia__ApiKey="SUA_API_KEY_NVIDIA"
+$env:Gemini__ApiKey="SUA_API_KEY_GEMINI"
 
 # Linux/macOS
-export Gemini__ApiKey="SUA_API_KEY_AQUI"
+export AiProvider__Provider="Nvidia"  # ou "Gemini"
+export Nvidia__ApiKey="SUA_API_KEY_NVIDIA"
+export Gemini__ApiKey="SUA_API_KEY_GEMINI"
 ```
 
 Ou criar um arquivo `appsettings.Development.json` para configurações de desenvolvimento:
 
 ```json
 {
+  "AiProvider": {
+    "Provider": "Nvidia"
+  },
+  "Nvidia": {
+    "ApiKey": "SUA_API_KEY_DEVELOPMENT"
+  },
   "Gemini": {
     "ApiKey": "SUA_API_KEY_DEVELOPMENT"
   }
 }
 ```
+
+### Comparação entre Provedores
+
+| Recurso | NVIDIA | Gemini |
+|---------|--------|--------|
+| **OCR de Placas** | ✅ | ✅ |
+| **Análise de Veículos** | ✅ | ✅ |
+| **Recorte de Imagem** | ❌ (gratuito) | ⚠️ (requer plano pago) |
+| **API Key Gratuita** | ✅ | ✅ |
+| **Modelos** | Llama (Meta) | Gemini Flash |
+| **Rate Limits** | Conforme política NVIDIA | Conforme plano Google |
+
+**Recomendação:** Use **NVIDIA** para uso gratuito completo, ou **Gemini** se você já tiver um plano pago e precisar de recorte de imagem.
 
 ## 🏃 Executando a API
 
@@ -157,7 +221,7 @@ Analisa uma imagem de veículo e retorna informações sobre a placa e detalhes 
   "imagemPlacaRecortada": {
     "base64": null,
     "mimeType": null,
-    "mensagem": "API Gratuita não pode fazer recorte de placa, apenas análise. O recorte de imagem requer um plano pago da API do Google Gemini."
+    "mensagem": "API Gratuita da NVIDIA não suporta recorte de imagem. Esta funcionalidade requer modelos especializados de geração de imagem que não estão disponíveis na versão gratuita."
   },
   "erro": null
 }
@@ -428,7 +492,7 @@ Write-Host "Cor: $($response.detalhesVeiculo.cor)"
 A API processa as imagens em 3 etapas principais:
 
 1. **Extração da Placa (OCR)**
-   - Usa o modelo `gemini-2.5-flash-preview-09-2025` para análise de texto
+   - Usa o modelo `meta/llama-3.1-70b-instruct` da NVIDIA para análise de visão computacional
    - Extrai o número da placa da imagem
    - Retorna "Placa não encontrada" se não conseguir identificar
 
@@ -438,15 +502,15 @@ A API processa as imagens em 3 etapas principais:
    - Se não duplicada, adiciona ao cache para futuras verificações
 
 3. **Análise de Detalhes do Veículo**
-   - Usa o mesmo modelo de texto para análise visual
+   - Usa o modelo de visão da NVIDIA para análise visual
    - Identifica: cor, tipo, marca e fabricante
    - Classifica o formato da placa (Brasil ou Mercosul)
    - Continua mesmo se a placa não foi encontrada na etapa 1
 
-4. **Recorte de Imagem** *(Desabilitado na versão gratuita)*
-   - Funcionalidade desabilitada para APIs gratuitas
+4. **Recorte de Imagem** *(Não disponível na versão gratuita)*
+   - Funcionalidade não suportada pela API NVIDIA gratuita
    - Retorna mensagem informativa sobre a limitação
-   - Requer plano pago do Google Gemini para funcionar
+   - Requer modelos especializados de geração de imagem que não estão disponíveis gratuitamente
 
 ## ⚠️ Tratamento de Erros
 
@@ -456,10 +520,11 @@ A API processa as imagens em 3 etapas principais:
 - **MIME type não suportado**: Retorna `400 Bad Request` com lista de tipos aceitos
 - **Imagem ausente**: Retorna `400 Bad Request`
 
-### Erros da API Gemini
+### Erros da API NVIDIA
 
 - **Retry automático**: 3 tentativas com backoff exponencial (1s, 2s, 4s)
-- **Erro de quota**: Retorna mensagem amigável sobre limitações da API gratuita
+- **Rate limiting**: Aguarda automaticamente conforme headers `Retry-After` da resposta
+- **Erro de autenticação**: Retorna mensagem clara sobre API Key inválida
 - **Erro de rede**: Retenta automaticamente com delay crescente
 
 ### Códigos de Status HTTP
@@ -485,11 +550,12 @@ O sistema mantém um cache em memória para evitar processamento duplicado:
 
 ## 🚫 Limitações
 
-### API Gratuita do Google Gemini
+### API Gratuita da NVIDIA
 
-- **Recorte de Imagem**: Não disponível na versão gratuita
-- **Quota**: Limites de requisições por minuto/dia conforme plano
-- **Modelos**: Usa modelos preview que podem ter limitações
+- **Recorte de Imagem**: Não suportado na versão gratuita (requer modelos especializados)
+- **Rate Limiting**: Limites de requisições conforme política da NVIDIA
+- **Modelos**: Usa modelos de visão computacional disponíveis na API gratuita
+- **Requisitos**: Requer API Key válida obtida em [NVIDIA AI Foundation Models](https://build.nvidia.com/)
 
 ### Processamento
 
@@ -507,16 +573,19 @@ O sistema mantém um cache em memória para evitar processamento duplicado:
 
 ## 🔍 Troubleshooting
 
-### Erro: "API Key inválida"
-
-**Solução**: Verifique se a API Key está correta no `appsettings.json` e se está ativa no Google AI Studio.
-
-### Erro: "Quota excedida"
+### Erro: "API Key da NVIDIA inválida ou não fornecida"
 
 **Solução**: 
-- Aguarde alguns minutos antes de tentar novamente
-- Verifique seu plano no Google AI Studio
-- Considere atualizar para um plano pago se necessário
+- Verifique se a API Key está correta no `appsettings.json`
+- Certifique-se de que a API Key está ativa em [NVIDIA AI Foundation Models](https://build.nvidia.com/)
+- Verifique se o nome da seção no appsettings.json é "Nvidia" (não "Gemini")
+
+### Erro: "Rate limit atingido"
+
+**Solução**: 
+- A API automaticamente aguarda e tenta novamente usando o header `Retry-After`
+- Aguarde alguns minutos antes de fazer novas requisições
+- Verifique os limites da sua conta no portal da NVIDIA
 
 ### Erro: "Placa não encontrada" recorrente
 
@@ -548,8 +617,23 @@ O sistema mantém um cache em memória para evitar processamento duplicado:
 
 - A API usa CORS configurado para permitir requisições de qualquer origem
 - Logs são gerados automaticamente para facilitar debugging
-- O sistema de retry ajuda a lidar com falhas temporárias da API do Gemini
+- O sistema de retry ajuda a lidar com falhas temporárias da API da NVIDIA
 - A validação de base64 aceita tanto strings puras quanto data URLs
+- O serviço limpa automaticamente respostas JSON que podem vir com markdown code blocks
+
+## 🔄 Escolhendo entre NVIDIA e Gemini
+
+A API agora suporta ambos os provedores. Para trocar entre eles:
+
+1. **Edite o `appsettings.json`** e altere o campo `AiProvider.Provider`:
+   - Para usar NVIDIA: `"Provider": "Nvidia"`
+   - Para usar Gemini: `"Provider": "Gemini"`
+
+2. **Configure a API Key correspondente** no mesmo arquivo
+
+3. **Reinicie a aplicação**
+
+O formato das requisições e respostas da API permanece o mesmo independente do provedor escolhido, então não é necessário alterar o código cliente ao trocar de provedor.
 
 ## 📄 Licença
 
@@ -561,4 +645,4 @@ Contribuições são bem-vindas! Sinta-se à vontade para abrir issues ou pull r
 
 ---
 
-**Desenvolvido com .NET 8 e Google Gemini AI**
+**Desenvolvido com .NET 8 e NVIDIA NIM API**

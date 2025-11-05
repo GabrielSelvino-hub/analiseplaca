@@ -6,7 +6,7 @@ using PlateAnalysisApi.Models;
 
 namespace PlateAnalysisApi.Services;
 
-public class GeminiService
+public class GeminiService : IAiService
 {
     private readonly HttpClient _httpClient;
     private readonly GeminiOptions _options;
@@ -146,6 +146,14 @@ public class GeminiService
             return (null, null, "Não foi possível recortar a imagem da placa (placa não encontrada no Passo 1).");
         }
 
+        // Verifica se a chave está configurada como gratuita
+        // Se sim, retorna erro imediatamente sem tentar processar
+        if (_options.IsFreeTier)
+        {
+            _logger.LogWarning("Tentativa de recortar imagem com chave gratuita. Operação bloqueada (baseado na configuração IsFreeTier).");
+            return (null, null, "API Gratuita não pode fazer recorte de placa, apenas análise. O recorte de imagem requer um plano pago da API do Google Gemini.");
+        }
+
         var systemPrompt = "Você é uma ferramenta de detecção e corte de placas veiculares. Sua tarefa é analisar a imagem, detectar **APENAS a placa veicular principal e mais proeminente** e gerar uma nova imagem contendo *somente* essa placa recortada. O corte deve ser o mais preciso e limpo possível. Retorne APENAS a imagem gerada, sem nenhum texto adicional.";
         var userQuery = "Recorte a placa veicular desta imagem. Priorize uma única placa.";
 
@@ -188,15 +196,11 @@ public class GeminiService
             }
             return (base64Data, returnedMimeType ?? mimeType, null);
         }
-        catch (HttpRequestException ex) when (ex.Message.Contains("429") || ex.Message.Contains("Quota"))
-        {
-            _logger.LogWarning("Quota excedida ao tentar recortar imagem. Retornando mensagem amigável.");
-            return (null, null, "API Gratuita não pode fazer recorte de placa, apenas análise. O recorte de imagem requer um plano pago da API do Google Gemini.");
-        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Erro ao recortar imagem");
-            return (null, null, $"Erro ao recortar imagem: {ex.Message}");
+            var errorMessage = ex is HttpRequestException httpEx ? httpEx.Message : ex.ToString();
+            return (null, null, errorMessage);
         }
     }
 
@@ -221,7 +225,7 @@ public class GeminiService
                 if (!response.IsSuccessStatusCode)
                 {
                     var errorData = await response.Content.ReadAsStringAsync(cancellationToken);
-                    throw new HttpRequestException($"HTTP error! status: {response.StatusCode} - {errorData}");
+                    throw new HttpRequestException(errorData);
                 }
 
                 var resultJson = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -250,7 +254,8 @@ public class GeminiService
                 }
                 else
                 {
-                    throw new InvalidOperationException("Falha na análise (Texto) após várias tentativas.", ex);
+                    var errorMessage = ex is HttpRequestException httpEx ? httpEx.Message : ex.ToString();
+                    throw new HttpRequestException(errorMessage, ex);
                 }
             }
         }
@@ -273,7 +278,7 @@ public class GeminiService
 
                 var response = await _httpClient.PostAsync(apiUrl, content, cancellationToken);
 
-                if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+                if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests && attempt < MaxRetries - 1)
                 {
                     var errorData = await response.Content.ReadAsStringAsync(cancellationToken);
                     _logger.LogWarning("429 TooManyRequests (Imagem) - Quota excedida. Resposta: {ErrorData}", errorData);
@@ -312,35 +317,16 @@ public class GeminiService
                         _logger.LogWarning(ex, "Não foi possível extrair retryDelay da resposta, usando valor padrão");
                     }
                     
-                    if (attempt < MaxRetries - 1)
-                    {
-                        _logger.LogInformation("Aguardando {Delay}ms antes de tentar novamente (quota excedida)...", retryDelayMs);
-                        await Task.Delay(retryDelayMs, cancellationToken);
-                        continue; // Tenta novamente
-                    }
-                    else
-                    {
-                        // Retorna mensagem amigável em vez de lançar exceção
-                        _logger.LogWarning("Quota excedida após {MaxRetries} tentativas. Retornando mensagem amigável.", MaxRetries);
-                        return (null, null, "API Gratuita não pode fazer recorte de placa, apenas análise. O recorte de imagem requer um plano pago da API do Google Gemini.");
-                    }
+                    _logger.LogInformation("Aguardando {Delay}ms antes de tentar novamente (quota excedida)...", retryDelayMs);
+                    await Task.Delay(retryDelayMs, cancellationToken);
+                    continue; // Tenta novamente
                 }
 
                 if (!response.IsSuccessStatusCode)
                 {
                     var errorData = await response.Content.ReadAsStringAsync(cancellationToken);
                     _logger.LogError("HTTP error (Imagem)! status: {StatusCode}, resposta: {ErrorData}", response.StatusCode, errorData);
-                    
-                    // Se for erro 429 ou quota, retorna mensagem amigável
-                    if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests || 
-                        errorData.Contains("429") || 
-                        errorData.Contains("Quota") || 
-                        errorData.Contains("quota"))
-                    {
-                        return (null, null, "API Gratuita não pode fazer recorte de placa, apenas análise. O recorte de imagem requer um plano pago da API do Google Gemini.");
-                    }
-                    
-                    throw new HttpRequestException($"HTTP error (Imagem)! status: {response.StatusCode} - {errorData}");
+                    throw new HttpRequestException(errorData);
                 }
 
                 var resultJson = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -427,19 +413,13 @@ public class GeminiService
                 {
                     var errorMessage = errorResponse.GetRawText();
                     _logger.LogError("Erro retornado pela API: {Error}", errorMessage);
-                    // Verifica se é erro de quota
-                    if (errorMessage.Contains("429") || errorMessage.Contains("Quota") || errorMessage.Contains("quota"))
-                    {
-                        return (null, null, "API Gratuita não pode fazer recorte de placa, apenas análise. O recorte de imagem requer um plano pago da API do Google Gemini.");
-                    }
-                    return (null, null, $"Erro da API Gemini: {errorMessage}");
+                    return (null, null, errorMessage);
                 }
                 
                 return (null, null, "Resposta da IA (Imagem) incompleta. A IA não retornou uma imagem recortada.");
             }
-            catch (Exception ex) when (!(ex is HttpRequestException httpEx && httpEx.Message.Contains("429")))
+            catch (Exception ex)
             {
-                // Não captura erros 429 aqui, eles já foram tratados acima
                 _logger.LogError(ex, "Tentativa {Attempt} (Imagem) falhou: {ErrorType} - {Message}", attempt + 1, ex.GetType().Name, ex.Message);
 
                 if (attempt < MaxRetries - 1)
@@ -451,22 +431,14 @@ public class GeminiService
                 else
                 {
                     _logger.LogError("Todas as tentativas falharam. Último erro: {Error}", ex);
-                    // Verifica se é erro de quota
-                    if (ex.Message.Contains("429") || ex.Message.Contains("Quota") || ex.Message.Contains("quota"))
-                    {
-                        return (null, null, "API Gratuita não pode fazer recorte de placa, apenas análise. O recorte de imagem requer um plano pago da API do Google Gemini.");
-                    }
-                    return (null, null, $"Falha na análise (Recorte de Imagem) após várias tentativas. Último erro: {ex.Message}");
+                    var errorMessage = ex is HttpRequestException httpEx ? httpEx.Message : ex.ToString();
+                    return (null, null, errorMessage);
                 }
-            }
-            catch (HttpRequestException httpEx) when (httpEx.Message.Contains("429"))
-            {
-                // Retorna mensagem amigável para erros 429 não tratados acima
-                return (null, null, "API Gratuita não pode fazer recorte de placa, apenas análise. O recorte de imagem requer um plano pago da API do Google Gemini.");
             }
         }
 
         return (null, null, "Erro desconhecido na comunicação com a API (Gemini Imagem).");
     }
+
 }
 
