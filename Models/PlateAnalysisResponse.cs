@@ -7,5 +7,6 @@ public class PlateAnalysisResponse
     public VehicleDetails? DetalhesVeiculo { get; set; }
     public CroppedPlateImage? ImagemPlacaRecortada { get; set; }
     public string? Erro { get; set; }
+    public string? ApiUtilizada { get; set; }
 }
 

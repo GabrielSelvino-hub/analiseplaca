@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teste - Análise de Placas Veiculares</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+    </style>
+</head>
+<body class="bg-gradient-to-br from-blue-50 to-indigo-100 min-h-screen py-8 px-4">
+    <div class="max-w-6xl mx-auto">
+        <!-- Header -->
+        <div class="bg-white rounded-2xl shadow-lg p-6 mb-6">
+            <h1 class="text-4xl font-bold text-gray-800 mb-2 flex items-center">
+                <svg class="w-10 h-10 mr-3 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2c-2.83 0-5.54.912-7.818 2.596C2.25 6.48 1.13 9.17 1.13 12c0 2.83 1.12 5.52 3.052 7.404C6.46 21.088 9.17 22 12 22s5.54-.912 7.818-2.596C21.75 17.52 22.87 14.83 22.87 12c0-2.83-1.12-5.52-3.052-7.404z"></path>
+                </svg>
+                Teste - Análise de Placas Veiculares
+            </h1>
+            <p class="text-gray-600">Faça upload de uma imagem de veículo para análise automática da placa e detalhes do veículo</p>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <!-- Painel Esquerdo: Upload e Imagem Original -->
+            <div class="space-y-6">
+                <div class="bg-white rounded-2xl shadow-lg p-6">
+                    <h2 class="text-xl font-semibold text-gray-800 mb-4">1. Upload da Imagem</h2>
+                    
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-gray-700 mb-2">
+                            Selecione uma imagem do veículo
+                        </label>
+                        <input type="file" id="imageInput" accept="image/*" 
+                            class="block w-full text-sm text-gray-500
+                            file:mr-4 file:py-2 file:px-4
+                            file:rounded-lg file:border-0
+                            file:text-sm file:font-semibold
+                            file:bg-blue-50 file:text-blue-700
+                            hover:file:bg-blue-100
+                            cursor-pointer">
+                    </div>
+
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-gray-700 mb-2">
+                            Provedor de IA
+                        </label>
+                        <select id="providerSelect" 
+                            class="block w-full px-4 py-2 border border-gray-300 rounded-lg bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <option value="nvidia">NVIDIA</option>
+                            <option value="gemini">Gemini</option>
+                        </select>
+                    </div>
+
+                    <div class="border-2 border-dashed border-gray-300 rounded-lg p-4 bg-gray-50">
+                        <img id="imagePreview" 
+                            class="w-full h-auto max-h-96 object-contain rounded-lg" 
+                            src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='250'%3E%3Crect fill='%23f3f4f6' width='400' height='250'/%3E%3Ctext fill='%239ca3af' font-family='sans-serif' font-size='18' x='50%25' y='50%25' text-anchor='middle' dominant-baseline='middle'%3EPré-visualização da Imagem%3C/text%3E%3C/svg%3E" 
+                            alt="Pré-visualização">
+                    </div>
+
+                    <button id="analyzeButton" 
+                        class="w-full mt-4 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-6 rounded-lg transition duration-200 disabled:bg-gray-400 disabled:cursor-not-allowed"
+                        disabled>
+                        <span id="buttonText">Analisar Imagem</span>
+                        <span id="buttonSpinner" class="hidden inline-block ml-2">
+                            <svg class="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                        </span>
+                    </button>
+                </div>
+
+                <!-- Status/Erro -->
+                <div id="statusBox" class="hidden bg-white rounded-2xl shadow-lg p-6">
+                    <div id="statusContent"></div>
+                </div>
+            </div>
+
+            <!-- Painel Direito: Resultados -->
+            <div class="space-y-6">
+                <!-- Placa Detectada -->
+                <div class="bg-white rounded-2xl shadow-lg p-6">
+                    <h2 class="text-xl font-semibold text-gray-800 mb-4">2. Placa Detectada</h2>
+                    <div id="plateResult" class="text-center p-6 bg-gray-50 rounded-lg border-2 border-dashed border-gray-300">
+                        <p class="text-gray-500 text-lg">Aguardando análise...</p>
+                    </div>
+                </div>
+
+                <!-- Detalhes do Veículo -->
+                <div class="bg-white rounded-2xl shadow-lg p-6">
+                    <h2 class="text-xl font-semibold text-gray-800 mb-4">3. Detalhes do Veículo</h2>
+                    <div id="vehicleDetails" class="space-y-3">
+                        <div class="text-center p-6 bg-gray-50 rounded-lg border-2 border-dashed border-gray-300">
+                            <p class="text-gray-500">Aguardando análise...</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Imagem Recortada -->
+                <div class="bg-white rounded-2xl shadow-lg p-6">
+                    <h2 class="text-xl font-semibold text-gray-800 mb-4">4. Imagem da Placa Recortada</h2>
+                    <div id="croppedImageContainer" class="text-center p-6 bg-gray-50 rounded-lg border-2 border-dashed border-gray-300">
+                        <p class="text-gray-500 mb-4">Aguardando recorte...</p>
+                        <img id="croppedImage" class="hidden max-w-full h-auto mx-auto rounded-lg shadow-md" alt="Placa recortada">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const imageInput = document.getElementById('imageInput');
+        const imagePreview = document.getElementById('imagePreview');
+        const analyzeButton = document.getElementById('analyzeButton');
+        const buttonText = document.getElementById('buttonText');
+        const buttonSpinner = document.getElementById('buttonSpinner');
+        const plateResult = document.getElementById('plateResult');
+        const vehicleDetails = document.getElementById('vehicleDetails');
+        const croppedImageContainer = document.getElementById('croppedImageContainer');
+        const croppedImage = document.getElementById('croppedImage');
+        const statusBox = document.getElementById('statusBox');
+        const statusContent = document.getElementById('statusContent');
+
+        let selectedFile = null;
+
+        // Preview da imagem
+        imageInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                selectedFile = file;
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    imagePreview.src = e.target.result;
+                    analyzeButton.disabled = false;
+                };
+                reader.readAsDataURL(file);
+            } else {
+                analyzeButton.disabled = true;
+            }
+        });
+
+        // Função para exibir status
+        function showStatus(message, type = 'info') {
+            statusBox.classList.remove('hidden');
+            const bgColor = type === 'error' ? 'bg-red-50 border-red-200' : 
+                          type === 'warning' ? 'bg-yellow-50 border-yellow-200' : 
+                          'bg-blue-50 border-blue-200';
+            const textColor = type === 'error' ? 'text-red-800' : 
+                            type === 'warning' ? 'text-yellow-800' : 
+                            'text-blue-800';
+            statusContent.className = `p-4 rounded-lg border-2 ${bgColor} ${textColor}`;
+            statusContent.innerHTML = message;
+        }
+
+        function hideStatus() {
+            statusBox.classList.add('hidden');
+        }
+
+        // Função para converter arquivo em base64
+        function fileToBase64(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.readAsDataURL(file);
+                reader.onload = () => {
+                    const base64 = reader.result.split(',')[1];
+                    resolve(base64);
+                };
+                reader.onerror = reject;
+            });
+        }
+
+        // Função para formatar os detalhes do veículo
+        function formatVehicleDetails(details) {
+            if (!details) return '<p class="text-gray-500">Nenhum detalhe disponível</p>';
+            
+            return `
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="p-3 bg-blue-50 rounded-lg">
+                        <div class="text-xs text-gray-500 uppercase mb-1">Cor</div>
+                        <div class="text-lg font-semibold text-gray-800">${details.cor || 'N/A'}</div>
+                    </div>
+                    <div class="p-3 bg-green-50 rounded-lg">
+                        <div class="text-xs text-gray-500 uppercase mb-1">Tipo</div>
+                        <div class="text-lg font-semibold text-gray-800">${details.tipo || 'N/A'}</div>
+                    </div>
+                    <div class="p-3 bg-purple-50 rounded-lg">
+                        <div class="text-xs text-gray-500 uppercase mb-1">Marca</div>
+                        <div class="text-lg font-semibold text-gray-800">${details.marca || 'N/A'}</div>
+                    </div>
+                    <div class="p-3 bg-orange-50 rounded-lg">
+                        <div class="text-xs text-gray-500 uppercase mb-1">Fabricante</div>
+                        <div class="text-lg font-semibold text-gray-800">${details.fabricante || 'N/A'}</div>
+                    </div>
+                    <div class="p-3 bg-indigo-50 rounded-lg">
+                        <div class="text-xs text-gray-500 uppercase mb-1">Placa Brasil</div>
+                        <div class="text-lg font-semibold text-gray-800">${details.placa_brasil || 'N/A'}</div>
+                    </div>
+                    <div class="p-3 bg-pink-50 rounded-lg">
+                        <div class="text-xs text-gray-500 uppercase mb-1">Formato</div>
+                        <div class="text-lg font-semibold text-gray-800">${details.placa_mercosul || 'N/A'}</div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Função para analisar a imagem
+        analyzeButton.addEventListener('click', async () => {
+            if (!selectedFile) return;
+
+            // Reset UI
+            hideStatus();
+            plateResult.innerHTML = '<p class="text-gray-500">Analisando...</p>';
+            vehicleDetails.innerHTML = '<div class="text-center p-6 bg-gray-50 rounded-lg"><p class="text-gray-500">Analisando...</p></div>';
+            croppedImageContainer.innerHTML = '<p class="text-gray-500">Aguardando recorte...</p>';
+            croppedImage.classList.add('hidden');
+
+            // Disable button e mostra spinner
+            analyzeButton.disabled = true;
+            buttonText.textContent = 'Analisando...';
+            buttonSpinner.classList.remove('hidden');
+
+            try {
+                // Converte arquivo para base64
+                const base64 = await fileToBase64(selectedFile);
+                const mimeType = selectedFile.type || 'image/jpeg';
+
+                // Obtém o provedor selecionado
+                const provider = document.getElementById('providerSelect').value;
+                // Constrói a URL completa: URL atual + provider + "analyze-plate"
+                const baseUrl = window.location.origin + window.location.pathname;
+                const endpoint = `${baseUrl}/${provider}/analyze-plate`;
+
+                // Faz requisição para a API
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        imageBase64: base64,
+                        mimeType: mimeType
+                    })
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({ erro: 'Erro desconhecido' }));
+                    throw new Error(errorData.erro || `Erro HTTP: ${response.status}`);
+                }
+
+                const result = await response.json();
+
+                // Exibe placa
+                if (result.duplicada) {
+                    plateResult.innerHTML = `
+                        <div class="p-4 bg-yellow-50 border-2 border-yellow-400 rounded-lg">
+                            <p class="text-2xl font-bold text-yellow-800 mb-2">${result.placa}</p>
+                            <p class="text-sm text-yellow-700">⚠️ Placa duplicada - já foi processada nesta sessão</p>
+                        </div>
+                    `;
+                    showStatus(result.erro || 'Esta placa já foi processada anteriormente.', 'warning');
+                } else if (result.placa === 'Placa não encontrada' || result.placa === 'Erro de Processamento.') {
+                    plateResult.innerHTML = `
+                        <div class="p-4 bg-red-50 border-2 border-red-400 rounded-lg">
+                            <p class="text-xl font-semibold text-red-800">${result.placa}</p>
+                        </div>
+                    `;
+                } else {
+                    plateResult.innerHTML = `
+                        <div class="p-4 bg-green-50 border-2 border-green-400 rounded-lg">
+                            <p class="text-4xl font-bold text-green-800 font-mono">${result.placa}</p>
+                        </div>
+                    `;
+                }
+
+                // Exibe detalhes do veículo
+                if (result.detalhesVeiculo) {
+                    vehicleDetails.innerHTML = formatVehicleDetails(result.detalhesVeiculo);
+                } else {
+                    vehicleDetails.innerHTML = '<p class="text-gray-500">Detalhes não disponíveis</p>';
+                }
+
+                // Exibe imagem recortada
+                if (result.imagemPlacaRecortada && result.imagemPlacaRecortada.base64) {
+                    croppedImage.src = `data:${result.imagemPlacaRecortada.mimeType || mimeType};base64,${result.imagemPlacaRecortada.base64}`;
+                    croppedImage.classList.remove('hidden');
+                    croppedImageContainer.innerHTML = '';
+                    croppedImageContainer.appendChild(croppedImage);
+                } else {
+                    const errorMsg = result.erro || 'Imagem recortada não disponível';
+                    croppedImageContainer.innerHTML = `
+                        <div class="p-4 bg-gray-100 rounded-lg">
+                            <p class="text-gray-600 text-sm">${errorMsg}</p>
+                        </div>
+                    `;
+                }
+
+                // Exibe erro se houver
+                if (result.erro && !result.duplicada) {
+                    showStatus(result.erro, 'warning');
+                }
+
+            } catch (error) {
+                console.error('Erro ao analisar imagem:', error);
+                showStatus(`Erro: ${error.message}`, 'error');
+                plateResult.innerHTML = `
+                    <div class="p-4 bg-red-50 border-2 border-red-400 rounded-lg">
+                        <p class="text-red-800">Erro ao processar imagem</p>
+                    </div>
+                `;
+            } finally {
+                analyzeButton.disabled = false;
+                buttonText.textContent = 'Analisar Imagem';
+                buttonSpinner.classList.add('hidden');
+            }
+        });
+    </script>
+</body>
+</html>
+
