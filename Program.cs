@@ -174,6 +174,7 @@ async Task<IResult> ProcessPlateAnalysis(
         // PASSO 1: Extração da placa (OCR)
         logger.LogInformation("Iniciando extração da placa via OCR...");
         string plateText;
+        double? nivelConfianca = null;
 
         try
         {
@@ -201,6 +202,7 @@ async Task<IResult> ProcessPlateAnalysis(
             };
             var plateResult = JsonSerializer.Deserialize<PlateDetectionResult>(plateJson, jsonOptions);
             plateText = plateResult?.Placa ?? "Placa não encontrada";
+            nivelConfianca = plateResult?.NivelConfianca;
         }
         catch (Exception ex)
         {
@@ -270,6 +272,7 @@ async Task<IResult> ProcessPlateAnalysis(
         var response = new PlateAnalysisResponse
         {
             Placa = plateText,
+            NivelConfianca = nivelConfianca,
             Duplicada = false,
             DetalhesVeiculo = vehicleDetails,
             ImagemPlacaRecortada = croppedImage,

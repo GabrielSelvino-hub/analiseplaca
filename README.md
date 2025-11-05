@@ -1,6 +1,6 @@
 # API .NET 8 - Análise de Placas Veiculares
 
-API REST desenvolvida em .NET 8 para análise automática de placas veiculares usando inteligência artificial da NVIDIA. A API realiza OCR (reconhecimento óptico de caracteres) para extrair o número da placa, analisa características do veículo (cor, tipo, marca, fabricante) e identifica o formato da placa (Brasil ou Mercosul).
+API REST desenvolvida em .NET 8 para análise automática de placas veiculares usando inteligência artificial da NVIDIA ou Google Gemini. A API realiza OCR (reconhecimento óptico de caracteres) para extrair o número da placa com nível de confiança, analisa características do veículo (cor, tipo, fabricante) e identifica o formato da placa (Brasil ou Mercosul).
 
 ## 📋 Índice
 
@@ -21,7 +21,8 @@ API REST desenvolvida em .NET 8 para análise automática de placas veiculares u
 ## 🚀 Funcionalidades
 
 - **OCR de Placas**: Extração automática do número da placa veicular usando NVIDIA NIM API
-- **Análise de Veículos**: Identificação de cor, tipo, marca e fabricante do veículo
+- **Análise de Veículos**: Identificação de cor, tipo e fabricante do veículo
+- **Nível de Confiança**: Retorna o nível de confiança (0.0 a 1.0) da leitura da placa
 - **Detecção de Formato**: Identificação se a placa é do formato brasileiro tradicional ou Mercosul
 - **Prevenção de Duplicatas**: Sistema de cache em memória para evitar processamento duplicado
 - **Validação de Entrada**: Validação automática de formato base64 e tipos MIME
@@ -209,13 +210,12 @@ Analisa uma imagem de veículo e retorna informações sobre a placa e detalhes 
 ```json
 {
   "placa": "ABC1234",
+  "nivelConfianca": 0.95,
   "duplicada": false,
   "detalhesVeiculo": {
     "cor": "Branco",
     "tipo": "Caminhão Baú",
-    "marca": "Mercedes-Benz",
     "fabricante": "Mercedes-Benz",
-    "placa_brasil": "ABC1234",
     "placa_mercosul": "Padrão Antigo"
   },
   "imagemPlacaRecortada": {
@@ -244,13 +244,12 @@ Analisa uma imagem de veículo e retorna informações sobre a placa e detalhes 
 ```json
 {
   "placa": "Placa não encontrada",
+  "nivelConfianca": 0.0,
   "duplicada": false,
   "detalhesVeiculo": {
     "cor": "Branco",
     "tipo": "Caminhão",
-    "marca": "Mercedes-Benz",
     "fabricante": "Mercedes-Benz",
-    "placa_brasil": "Placa não encontrada",
     "placa_mercosul": "Não Identificada"
   },
   "imagemPlacaRecortada": null,
@@ -311,7 +310,8 @@ Health check da API. Retorna o status da aplicação.
 ```typescript
 {
   placa: string;                          // Número da placa ou "Placa não encontrada"
-  duplicada: boolean;                     // Indica se a placa já foi processada
+  nivelConfianca: number | null;          // Nível de confiança da leitura (0.0 a 1.0)
+  duplicada: boolean;                      // Indica se a placa já foi processada
   detalhesVeiculo: VehicleDetails | null; // Detalhes do veículo (null se duplicada)
   imagemPlacaRecortada: CroppedPlateImage | null; // Imagem recortada (null na versão gratuita)
   erro: string | null;                    // Mensagem de erro (null se sucesso)
@@ -324,10 +324,8 @@ Health check da API. Retorna o status da aplicação.
 {
   cor: string;             // Cor predominante do veículo
   tipo: string;            // Tipo de carroceria (ex: "Caminhão Baú", "Sedan")
-  marca: string;           // Marca comercial do veículo
   fabricante: string;      // Fabricante do veículo
-  placa_brasil: string;    // Placa no formato brasileiro
-  placa_mercosul: string;  // "Mercosul" ou "Padrão Antigo"
+  placa_mercosul: string;  // "Mercosul" (placa nova do Mercosul) ou "Padrão Antigo" (placa antiga do Brasil) ou "Não Identificada"
 }
 ```
 
@@ -503,8 +501,8 @@ A API processa as imagens em 3 etapas principais:
 
 3. **Análise de Detalhes do Veículo**
    - Usa o modelo de visão da NVIDIA para análise visual
-   - Identifica: cor, tipo, marca e fabricante
-   - Classifica o formato da placa (Brasil ou Mercosul)
+   - Identifica: cor, tipo e fabricante
+   - Confirma se a placa é do formato Mercosul (placa nova) ou Padrão Antigo (placa antiga do Brasil)
    - Continua mesmo se a placa não foi encontrada na etapa 1
 
 4. **Recorte de Imagem** *(Não disponível na versão gratuita)*

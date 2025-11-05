@@ -42,9 +42,9 @@ public class NvidiaService : IAiService
 
     public async Task<string> GetPlateTextAsync(string imageBase64, string mimeType, CancellationToken cancellationToken = default)
     {
-        var systemPrompt = "Você é um modelo de OCR (Reconhecimento Óptico de Caracteres) especializado em placas veiculares brasileiras. Sua única tarefa é ler o texto da placa e retornar APENAS um JSON válido com o seguinte formato: {\"placa\": \"ABC1234\"}. Se a placa não for visível ou detectável, retorne {\"placa\": \"Placa não encontrada\"}. NÃO adicione texto fora do JSON.";
+        var systemPrompt = "Você é um modelo de OCR (Reconhecimento Óptico de Caracteres) especializado em placas veiculares brasileiras. Sua única tarefa é ler o texto da placa e retornar APENAS um JSON válido com o seguinte formato: {\"placa\": \"ABC1234\", \"nivelConfianca\": 0.95}. O campo nivelConfianca deve ser um número entre 0.0 e 1.0 indicando a confiança da leitura. Se a placa não for visível ou detectável, retorne {\"placa\": \"Placa não encontrada\", \"nivelConfianca\": 0.0}. NÃO adicione texto fora do JSON.";
 
-        var userPrompt = "Analise esta imagem de um veículo e identifique o texto da placa. Retorne apenas um JSON válido com o formato: {\"placa\": \"ABC1234\"} ou {\"placa\": \"Placa não encontrada\"} se não conseguir identificar.";
+        var userPrompt = "Analise esta imagem de um veículo e identifique o texto da placa. Retorne um JSON válido com o formato: {\"placa\": \"ABC1234\", \"nivelConfianca\": 0.95} onde nivelConfianca é um número entre 0.0 e 1.0. Se não conseguir identificar, retorne {\"placa\": \"Placa não encontrada\", \"nivelConfianca\": 0.0}.";
 
         var payload = new
         {
@@ -85,7 +85,7 @@ public class NvidiaService : IAiService
     {
         var systemPrompt = "Você é um sistema de Visão Computacional de alta precisão especializado em detecção de veículos. Sua única tarefa é retornar um objeto JSON estritamente conforme o esquema fornecido, mesmo que a placa não tenha sido encontrada na primeira etapa de análise.";
 
-        var userPrompt = $"Analise a imagem para determinar as características do veículo, como cor predominante, tipo de carroceria (ex: caminhão, carro, SUV), marca e fabricante. Use o valor fornecido para a placa, \"{extractedPlate}\", para preencher o campo placa_brasil. Se o valor da placa for \"Placa não encontrada\", use-o no campo placa_brasil e classifique o formato como 'Não Identificada' para o campo placa_mercosul, mas *continue a analisar as características visuais do veículo* (cor, tipo, marca) normalmente. Retorne um JSON válido com os seguintes campos: cor, tipo, marca, fabricante, placa_brasil, placa_mercosul. O campo placa_mercosul deve ser 'Mercosul' ou 'Padrão Antigo' ou 'Não Identificada'.";
+        var userPrompt = $"Analise a imagem para determinar as características do veículo, como cor predominante, tipo de carroceria (ex: caminhão, carro, SUV) e fabricante. Com base na placa identificada \"{extractedPlate}\", determine se é uma placa nova do Mercosul ou uma placa antiga do Brasil. O campo placa_mercosul deve ser 'Mercosul' (se for placa nova do Mercosul) ou 'Padrão Antigo' (se for placa antiga do Brasil). Se o valor da placa for \"Placa não encontrada\", classifique o formato como 'Não Identificada' para o campo placa_mercosul, mas *continue a analisar as características visuais do veículo* (cor, tipo, fabricante) normalmente. Retorne um JSON válido com os seguintes campos: cor, tipo, fabricante, placa_mercosul. O campo placa_mercosul deve ser 'Mercosul' ou 'Padrão Antigo' ou 'Não Identificada'.";
 
         var payload = new
         {

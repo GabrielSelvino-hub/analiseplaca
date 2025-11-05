@@ -45,12 +45,17 @@ public class GeminiService : IAiService
                 {
                     type = "STRING",
                     description = "O número da placa identificada, ex: 'ABC1234' ou 'JKL5M67'. Se não encontrada, deve ser 'Placa não encontrada'."
+                },
+                nivelConfianca = new
+                {
+                    type = "NUMBER",
+                    description = "Nível de confiança da leitura da placa, um valor entre 0.0 e 1.0, onde 1.0 indica 100% de confiança. Se a placa não foi encontrada, use 0.0."
                 }
             },
-            required = new[] { "placa" }
+            required = new[] { "placa", "nivelConfianca" }
         };
 
-        var prompt = "Analise esta imagem de um veículo e identifique o texto da placa. Retorne apenas o número da placa. Se a placa não for visível ou detectável, retorne 'Placa não encontrada'. Preencha o JSON estritamente conforme o esquema.";
+        var prompt = "Analise esta imagem de um veículo e identifique o texto da placa. Retorne o número da placa e o nível de confiança da leitura (0.0 a 1.0). Se a placa não for visível ou detectável, retorne 'Placa não encontrada' com nível de confiança 0.0. Preencha o JSON estritamente conforme o esquema.";
 
         var payload = new
         {
@@ -99,15 +104,13 @@ public class GeminiService : IAiService
             {
                 cor = new { type = "STRING", description = "Cor predominante do veículo, ex: 'Vermelho' ou 'Branco'." },
                 tipo = new { type = "STRING", description = "Tipo de carroceria ou modelo, ex: 'Caminhão Baú', 'Hatchback', 'Sedan'." },
-                marca = new { type = "STRING", description = "Marca comercial do veículo, ex: 'Mercedes-Benz', 'Fiat'." },
-                fabricante = new { type = "STRING", description = "Fabricante do veículo (pode ser o mesmo que a marca)." },
-                placa_brasil = new { type = "STRING", description = "A placa identificada no formato brasileiro (LLLNNNN) ou Mercosul (LLLNLNN)." },
-                placa_mercosul = new { type = "STRING", description = "Confirma se o formato da placa é 'Mercosul' ou 'Padrão Antigo'." }
+                fabricante = new { type = "STRING", description = "Fabricante do veículo, ex: 'Mercedes-Benz', 'Fiat', 'Volkswagen'." },
+                placa_mercosul = new { type = "STRING", description = "Confirma se o formato da placa é 'Mercosul' (placa nova do Mercosul) ou 'Padrão Antigo' (placa antiga do Brasil). Se a placa não foi encontrada, use 'Não Identificada'." }
             },
-            required = new[] { "cor", "tipo", "marca", "placa_brasil", "placa_mercosul" }
+            required = new[] { "cor", "tipo", "fabricante", "placa_mercosul" }
         };
 
-        var prompt = $"Analise a imagem para determinar as características do veículo, como cor predominante, tipo de carroceria (ex: caminhão, carro, SUV), marca e fabricante. Use o valor fornecido para a placa, \"{extractedPlate}\", para preencher o campo placa_brasil. Se o valor da placa for \"Placa não encontrada\", use-o no campo placa_brasil e classifique o formato como 'Não Identificada' para o campo placa_mercosul, mas *continue a analisar as características visuais do veículo* (cor, tipo, marca) normalmente. Preencha o JSON estruturado seguindo o esquema.";
+        var prompt = $"Analise a imagem para determinar as características do veículo, como cor predominante, tipo de carroceria (ex: caminhão, carro, SUV) e fabricante. Com base na placa identificada \"{extractedPlate}\", determine se é uma placa nova do Mercosul ou uma placa antiga do Brasil. O campo placa_mercosul deve ser 'Mercosul' (se for placa nova do Mercosul) ou 'Padrão Antigo' (se for placa antiga do Brasil). Se o valor da placa for \"Placa não encontrada\", classifique o formato como 'Não Identificada' para o campo placa_mercosul, mas *continue a analisar as características visuais do veículo* (cor, tipo, fabricante) normalmente. Preencha o JSON estruturado seguindo o esquema.";
 
         var payload = new
         {
