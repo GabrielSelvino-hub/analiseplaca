@@ -1,0 +1,472 @@
+using System.Text;
+using System.Text.Json;
+using Microsoft.Extensions.Options;
+using PlateAnalysisApi.Configuration;
+using PlateAnalysisApi.Models;
+
+namespace PlateAnalysisApi.Services;
+
+public class GeminiService
+{
+    private readonly HttpClient _httpClient;
+    private readonly GeminiOptions _options;
+    private readonly ILogger<GeminiService> _logger;
+    private const int MaxRetries = 3;
+
+    public GeminiService(HttpClient httpClient, IOptions<GeminiOptions> options, ILogger<GeminiService> logger)
+    {
+        _httpClient = httpClient;
+        _options = options.Value;
+        _logger = logger;
+    }
+
+    public async Task<string> GetPlateTextAsync(string imageBase64, string mimeType, CancellationToken cancellationToken = default)
+    {
+        var plateDetectionSchema = new
+        {
+            type = "OBJECT",
+            properties = new
+            {
+                placa = new
+                {
+                    type = "STRING",
+                    description = "O número da placa identificada, ex: 'ABC1234' ou 'JKL5M67'. Se não encontrada, deve ser 'Placa não encontrada'."
+                }
+            },
+            required = new[] { "placa" }
+        };
+
+        var prompt = "Analise esta imagem de um veículo e identifique o texto da placa. Retorne apenas o número da placa. Se a placa não for visível ou detectável, retorne 'Placa não encontrada'. Preencha o JSON estritamente conforme o esquema.";
+
+        var payload = new
+        {
+            contents = new[]
+            {
+                new
+                {
+                    role = "user",
+                    parts = new object[]
+                    {
+                        new { text = prompt },
+                        new
+                        {
+                            inlineData = new
+                            {
+                                mimeType = mimeType,
+                                data = imageBase64
+                            }
+                        }
+                    }
+                }
+            },
+            generationConfig = new
+            {
+                responseMimeType = "application/json",
+                responseSchema = plateDetectionSchema
+            },
+            systemInstruction = new
+            {
+                parts = new[]
+                {
+                    new { text = "Você é um modelo de OCR (Reconhecimento Óptico de Caracteres). Sua única tarefa é ler o texto da placa e retornar o JSON. NÃO adicione texto fora do JSON." }
+                }
+            }
+        };
+
+        return await FetchGeminiTextResultAsync(payload, _options.TextModel, cancellationToken);
+    }
+
+    public async Task<VehicleDetails> GetVehicleDetailsAsync(string imageBase64, string mimeType, string extractedPlate, CancellationToken cancellationToken = default)
+    {
+        var vehicleDetailsSchema = new
+        {
+            type = "OBJECT",
+            properties = new
+            {
+                cor = new { type = "STRING", description = "Cor predominante do veículo, ex: 'Vermelho' ou 'Branco'." },
+                tipo = new { type = "STRING", description = "Tipo de carroceria ou modelo, ex: 'Caminhão Baú', 'Hatchback', 'Sedan'." },
+                marca = new { type = "STRING", description = "Marca comercial do veículo, ex: 'Mercedes-Benz', 'Fiat'." },
+                fabricante = new { type = "STRING", description = "Fabricante do veículo (pode ser o mesmo que a marca)." },
+                placa_brasil = new { type = "STRING", description = "A placa identificada no formato brasileiro (LLLNNNN) ou Mercosul (LLLNLNN)." },
+                placa_mercosul = new { type = "STRING", description = "Confirma se o formato da placa é 'Mercosul' ou 'Padrão Antigo'." }
+            },
+            required = new[] { "cor", "tipo", "marca", "placa_brasil", "placa_mercosul" }
+        };
+
+        var prompt = $"Analise a imagem para determinar as características do veículo, como cor predominante, tipo de carroceria (ex: caminhão, carro, SUV), marca e fabricante. Use o valor fornecido para a placa, \"{extractedPlate}\", para preencher o campo placa_brasil. Se o valor da placa for \"Placa não encontrada\", use-o no campo placa_brasil e classifique o formato como 'Não Identificada' para o campo placa_mercosul, mas *continue a analisar as características visuais do veículo* (cor, tipo, marca) normalmente. Preencha o JSON estruturado seguindo o esquema.";
+
+        var payload = new
+        {
+            contents = new[]
+            {
+                new
+                {
+                    role = "user",
+                    parts = new object[]
+                    {
+                        new { text = prompt },
+                        new
+                        {
+                            inlineData = new
+                            {
+                                mimeType = mimeType,
+                                data = imageBase64
+                            }
+                        }
+                    }
+                }
+            },
+            generationConfig = new
+            {
+                responseMimeType = "application/json",
+                responseSchema = vehicleDetailsSchema
+            },
+            systemInstruction = new
+            {
+                parts = new[]
+                {
+                    new { text = "Você é um sistema de Visão Computacional de alta precisão especializado em detecção de veículos. Sua única tarefa é retornar um objeto JSON estritamente conforme o esquema fornecido, mesmo que a placa não tenha sido encontrada na primeira etapa de análise." }
+                }
+            }
+        };
+
+        var jsonString = await FetchGeminiTextResultAsync(payload, _options.TextModel, cancellationToken);
+        var options = new JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true
+        };
+        return JsonSerializer.Deserialize<VehicleDetails>(jsonString, options) 
+            ?? throw new InvalidOperationException("Resposta da IA não é um JSON válido para detalhes do veículo.");
+    }
+
+    public async Task<(string? base64, string? mimeType, string? errorMessage)> CropPlateImageAsync(string imageBase64, string mimeType, string plate, CancellationToken cancellationToken = default)
+    {
+        if (plate == "Placa não encontrada" || plate == "Erro de Processamento." || string.IsNullOrWhiteSpace(plate))
+        {
+            return (null, null, "Não foi possível recortar a imagem da placa (placa não encontrada no Passo 1).");
+        }
+
+        var systemPrompt = "Você é uma ferramenta de detecção e corte de placas veiculares. Sua tarefa é analisar a imagem, detectar **APENAS a placa veicular principal e mais proeminente** e gerar uma nova imagem contendo *somente* essa placa recortada. O corte deve ser o mais preciso e limpo possível. Retorne APENAS a imagem gerada, sem nenhum texto adicional.";
+        var userQuery = "Recorte a placa veicular desta imagem. Priorize uma única placa.";
+
+        var payload = new
+        {
+            contents = new[]
+            {
+                new
+                {
+                    parts = new object[]
+                    {
+                        new { text = userQuery },
+                        new
+                        {
+                            inlineData = new
+                            {
+                                mimeType = mimeType,
+                                data = imageBase64
+                            }
+                        }
+                    }
+                }
+            },
+            generationConfig = new
+            {
+                responseModalities = new[] { "TEXT", "IMAGE" }
+            },
+            systemInstruction = new
+            {
+                parts = new[] { new { text = systemPrompt } }
+            }
+        };
+
+        try
+        {
+            var (base64Data, returnedMimeType, errorMsg) = await FetchGeminiImageResultAsync(payload, cancellationToken);
+            if (errorMsg != null)
+            {
+                return (null, null, errorMsg);
+            }
+            return (base64Data, returnedMimeType ?? mimeType, null);
+        }
+        catch (HttpRequestException ex) when (ex.Message.Contains("429") || ex.Message.Contains("Quota"))
+        {
+            _logger.LogWarning("Quota excedida ao tentar recortar imagem. Retornando mensagem amigável.");
+            return (null, null, "API Gratuita não pode fazer recorte de placa, apenas análise. O recorte de imagem requer um plano pago da API do Google Gemini.");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Erro ao recortar imagem");
+            return (null, null, $"Erro ao recortar imagem: {ex.Message}");
+        }
+    }
+
+    private async Task<string> FetchGeminiTextResultAsync(object payload, string modelName, CancellationToken cancellationToken)
+    {
+        var apiUrl = $"{_options.BaseUrl}/{modelName}:generateContent?key={_options.ApiKey}";
+
+        for (int attempt = 0; attempt < MaxRetries; attempt++)
+        {
+            try
+            {
+                var jsonPayload = JsonSerializer.Serialize(payload);
+                var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
+
+                var response = await _httpClient.PostAsync(apiUrl, content, cancellationToken);
+
+                if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests && attempt < MaxRetries - 1)
+                {
+                    throw new HttpRequestException("429 Throttling");
+                }
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    var errorData = await response.Content.ReadAsStringAsync(cancellationToken);
+                    throw new HttpRequestException($"HTTP error! status: {response.StatusCode} - {errorData}");
+                }
+
+                var resultJson = await response.Content.ReadAsStringAsync(cancellationToken);
+                var result = JsonSerializer.Deserialize<JsonElement>(resultJson);
+
+                if (result.TryGetProperty("candidates", out var candidates) &&
+                    candidates.GetArrayLength() > 0 &&
+                    candidates[0].TryGetProperty("content", out var contentObj) &&
+                    contentObj.TryGetProperty("parts", out var parts) &&
+                    parts.GetArrayLength() > 0 &&
+                    parts[0].TryGetProperty("text", out var text))
+                {
+                    return text.GetString()?.Trim() ?? throw new InvalidOperationException("Resposta da IA (Texto) incompleta ou vazia.");
+                }
+
+                throw new InvalidOperationException("Resposta da IA (Texto) incompleta ou vazia.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Tentativa {Attempt} (Texto) falhou", attempt + 1);
+
+                if (attempt < MaxRetries - 1)
+                {
+                    var delay = (int)(Math.Pow(2, attempt) * 1000 + (Random.Shared.NextDouble() * 500));
+                    await Task.Delay(delay, cancellationToken);
+                }
+                else
+                {
+                    throw new InvalidOperationException("Falha na análise (Texto) após várias tentativas.", ex);
+                }
+            }
+        }
+
+        throw new InvalidOperationException("Erro desconhecido na comunicação com a API (Gemini Texto).");
+    }
+
+    private async Task<(string? base64, string? mimeType, string? errorMessage)> FetchGeminiImageResultAsync(object payload, CancellationToken cancellationToken)
+    {
+        var apiUrl = $"{_options.BaseUrl}/{_options.ImageModel}:generateContent?key={_options.ApiKey}";
+
+        _logger.LogInformation("Chamando API Gemini Image: modelo {Model}", _options.ImageModel);
+
+        for (int attempt = 0; attempt < MaxRetries; attempt++)
+        {
+            try
+            {
+                var jsonPayload = JsonSerializer.Serialize(payload);
+                var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
+
+                var response = await _httpClient.PostAsync(apiUrl, content, cancellationToken);
+
+                if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+                {
+                    var errorData = await response.Content.ReadAsStringAsync(cancellationToken);
+                    _logger.LogWarning("429 TooManyRequests (Imagem) - Quota excedida. Resposta: {ErrorData}", errorData);
+                    
+                    // Tenta extrair o retryDelay da resposta
+                    int retryDelayMs = 5000; // Default: 5 segundos
+                    try
+                    {
+                        var errorJson = JsonSerializer.Deserialize<JsonElement>(errorData);
+                        if (errorJson.TryGetProperty("error", out var errorObj) &&
+                            errorObj.TryGetProperty("details", out var details) &&
+                            details.GetArrayLength() > 0)
+                        {
+                            foreach (var detail in details.EnumerateArray())
+                            {
+                                if (detail.TryGetProperty("@type", out var type) &&
+                                    type.GetString() == "type.googleapis.com/google.rpc.RetryInfo" &&
+                                    detail.TryGetProperty("retryDelay", out var retryDelay))
+                                {
+                                    // Parse retryDelay (formato: "4s" ou "4.815910382s")
+                                    var delayStr = retryDelay.GetString();
+                                    if (!string.IsNullOrEmpty(delayStr) && delayStr.EndsWith("s"))
+                                    {
+                                        var secondsStr = delayStr.Substring(0, delayStr.Length - 1);
+                                        if (double.TryParse(secondsStr, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var seconds))
+                                        {
+                                            retryDelayMs = (int)(seconds * 1000) + 1000; // Adiciona 1 segundo extra para segurança
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Não foi possível extrair retryDelay da resposta, usando valor padrão");
+                    }
+                    
+                    if (attempt < MaxRetries - 1)
+                    {
+                        _logger.LogInformation("Aguardando {Delay}ms antes de tentar novamente (quota excedida)...", retryDelayMs);
+                        await Task.Delay(retryDelayMs, cancellationToken);
+                        continue; // Tenta novamente
+                    }
+                    else
+                    {
+                        // Retorna mensagem amigável em vez de lançar exceção
+                        _logger.LogWarning("Quota excedida após {MaxRetries} tentativas. Retornando mensagem amigável.", MaxRetries);
+                        return (null, null, "API Gratuita não pode fazer recorte de placa, apenas análise. O recorte de imagem requer um plano pago da API do Google Gemini.");
+                    }
+                }
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    var errorData = await response.Content.ReadAsStringAsync(cancellationToken);
+                    _logger.LogError("HTTP error (Imagem)! status: {StatusCode}, resposta: {ErrorData}", response.StatusCode, errorData);
+                    
+                    // Se for erro 429 ou quota, retorna mensagem amigável
+                    if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests || 
+                        errorData.Contains("429") || 
+                        errorData.Contains("Quota") || 
+                        errorData.Contains("quota"))
+                    {
+                        return (null, null, "API Gratuita não pode fazer recorte de placa, apenas análise. O recorte de imagem requer um plano pago da API do Google Gemini.");
+                    }
+                    
+                    throw new HttpRequestException($"HTTP error (Imagem)! status: {response.StatusCode} - {errorData}");
+                }
+
+                var resultJson = await response.Content.ReadAsStringAsync(cancellationToken);
+                var result = JsonSerializer.Deserialize<JsonElement>(resultJson);
+
+                // Log da resposta para debug (primeiros 500 chars para não sobrecarregar)
+                var responsePreview = resultJson.Length > 500 ? resultJson.Substring(0, 500) + "..." : resultJson;
+                _logger.LogInformation("Resposta da API Gemini (Imagem) - Preview: {Response}", responsePreview);
+
+                if (result.TryGetProperty("candidates", out var candidates) &&
+                    candidates.GetArrayLength() > 0)
+                {
+                    var firstCandidate = candidates[0];
+                    
+                    if (firstCandidate.TryGetProperty("content", out var contentObj))
+                    {
+                        if (contentObj.TryGetProperty("parts", out var parts))
+                        {
+                            foreach (var part in parts.EnumerateArray())
+                            {
+                                // Verifica se tem inlineData com imagem
+                                if (part.TryGetProperty("inlineData", out var inlineData))
+                                {
+                                    string? imageMimeType = null;
+                                    
+                                    // Verifica se tem mimeType
+                                    if (inlineData.TryGetProperty("mimeType", out var mimeTypeElement))
+                                    {
+                                        imageMimeType = mimeTypeElement.GetString();
+                                        _logger.LogInformation("MimeType da imagem encontrado: {MimeType}", imageMimeType);
+                                    }
+                                    else
+                                    {
+                                        _logger.LogWarning("inlineData não contém mimeType");
+                                    }
+                                    
+                                    if (inlineData.TryGetProperty("data", out var base64Data))
+                                    {
+                                        var imageData = base64Data.GetString();
+                                        if (!string.IsNullOrEmpty(imageData))
+                                        {
+                                            _logger.LogInformation("Imagem recortada recebida com sucesso (tamanho: {Length} chars, mimeType: {MimeType})", imageData.Length, imageMimeType ?? "não especificado");
+                                            return (imageData, imageMimeType, null);
+                                        }
+                                        else
+                                        {
+                                            _logger.LogWarning("Campo 'data' em inlineData está vazio ou null");
+                                        }
+                                    }
+                                    else
+                                    {
+                                        _logger.LogWarning("inlineData não contém campo 'data'");
+                                    }
+                                }
+                                
+                                // Verifica se tem texto (pode vir junto com a imagem)
+                                if (part.TryGetProperty("text", out var text))
+                                {
+                                    _logger.LogInformation("Texto na resposta (parte não é imagem): {Text}", text.GetString());
+                                }
+                            }
+                        }
+                        else
+                        {
+                            _logger.LogWarning("Candidato não contém 'parts'");
+                        }
+                    }
+                    else
+                    {
+                        _logger.LogWarning("Candidato não contém 'content'");
+                    }
+                }
+                else
+                {
+                    _logger.LogWarning("Resposta não contém 'candidates' ou está vazia.");
+                }
+
+                // Log completo da resposta para diagnóstico (limitado a 2000 chars para não sobrecarregar)
+                var fullResponse = resultJson.Length > 2000 ? resultJson.Substring(0, 2000) + "... (truncado)" : resultJson;
+                _logger.LogError("Resposta da IA (Imagem) incompleta. Estrutura da resposta: {Response}", fullResponse);
+                
+                // Tenta extrair informações úteis da resposta
+                if (result.TryGetProperty("error", out var errorResponse))
+                {
+                    var errorMessage = errorResponse.GetRawText();
+                    _logger.LogError("Erro retornado pela API: {Error}", errorMessage);
+                    // Verifica se é erro de quota
+                    if (errorMessage.Contains("429") || errorMessage.Contains("Quota") || errorMessage.Contains("quota"))
+                    {
+                        return (null, null, "API Gratuita não pode fazer recorte de placa, apenas análise. O recorte de imagem requer um plano pago da API do Google Gemini.");
+                    }
+                    return (null, null, $"Erro da API Gemini: {errorMessage}");
+                }
+                
+                return (null, null, "Resposta da IA (Imagem) incompleta. A IA não retornou uma imagem recortada.");
+            }
+            catch (Exception ex) when (!(ex is HttpRequestException httpEx && httpEx.Message.Contains("429")))
+            {
+                // Não captura erros 429 aqui, eles já foram tratados acima
+                _logger.LogError(ex, "Tentativa {Attempt} (Imagem) falhou: {ErrorType} - {Message}", attempt + 1, ex.GetType().Name, ex.Message);
+
+                if (attempt < MaxRetries - 1)
+                {
+                    var delay = (int)(Math.Pow(2, attempt) * 1000 + (Random.Shared.NextDouble() * 500));
+                    _logger.LogInformation("Aguardando {Delay}ms antes da próxima tentativa...", delay);
+                    await Task.Delay(delay, cancellationToken);
+                }
+                else
+                {
+                    _logger.LogError("Todas as tentativas falharam. Último erro: {Error}", ex);
+                    // Verifica se é erro de quota
+                    if (ex.Message.Contains("429") || ex.Message.Contains("Quota") || ex.Message.Contains("quota"))
+                    {
+                        return (null, null, "API Gratuita não pode fazer recorte de placa, apenas análise. O recorte de imagem requer um plano pago da API do Google Gemini.");
+                    }
+                    return (null, null, $"Falha na análise (Recorte de Imagem) após várias tentativas. Último erro: {ex.Message}");
+                }
+            }
+            catch (HttpRequestException httpEx) when (httpEx.Message.Contains("429"))
+            {
+                // Retorna mensagem amigável para erros 429 não tratados acima
+                return (null, null, "API Gratuita não pode fazer recorte de placa, apenas análise. O recorte de imagem requer um plano pago da API do Google Gemini.");
+            }
+        }
+
+        return (null, null, "Erro desconhecido na comunicação com a API (Gemini Imagem).");
+    }
+}
+

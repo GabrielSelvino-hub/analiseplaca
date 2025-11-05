@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Analisador de Placas Inteligente</title>
+    <!-- Carrega o Tailwind CSS para estilização moderna e responsiva --><script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Define a fonte Inter como padrão */
+        :root {
+            font-family: 'Inter', sans-serif;
+        }
+    </style>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'brand-blue': '#1D4ED8',
+                        'brand-light': '#EFF6FF',
+                        'brand-purple': '#8B5CF6'
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-gray-50 min-h-screen flex items-start justify-center p-4 sm:p-8">
+
+    <div id="app-container" class="w-full max-w-3xl bg-white shadow-xl rounded-2xl p-6 md:p-8 space-y-8">
+        <h1 class="text-3xl font-extrabold text-brand-blue border-b pb-3 mb-4 flex items-center">
+            <svg class="w-8 h-8 mr-2 text-brand-blue" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2c-2.83 0-5.54.912-7.818 2.596C2.25 6.48 1.13 9.17 1.13 12c0 2.83 1.12 5.52 3.052 7.404C6.46 21.088 9.17 22 12 22s5.54-.912 7.818-2.596C21.75 17.52 22.87 14.83 22.87 12c0-2.83-1.12-5.52-3.052-7.404z"></path></svg>
+            Análise de Placas e Veículos (IA)
+        </h1>
+
+        <p class="text-gray-600">
+            Carregue a imagem do veículo e o sistema irá extrair automaticamente a placa, os detalhes do caminhão e mostrará a placa **recortada pela IA**. O sistema também previne o processamento de placas duplicadas na mesma sessão.
+        </p>
+
+        <!-- Seção de Upload e Preview --><div class="space-y-4 border p-4 rounded-xl bg-gray-50">
+            <label class="block text-sm font-medium text-gray-700">Carregar Imagem do Veículo</label>
+            <input type="file" id="imageInput" accept="image/*" class="w-full text-sm text-gray-500
+                file:mr-4 file:py-2 file:px-4
+                file:rounded-full file:border-0
+                file:text-sm file:font-semibold
+                file:bg-brand-light file:text-brand-blue
+                hover:file:bg-brand-blue/10"
+                onchange="previewImage()">
+
+            <div class="flex items-center justify-center h-48 md:h-64 border border-dashed border-gray-300 bg-white rounded-lg mt-4">
+                <img id="imagePreview" class="max-h-full max-w-full object-contain rounded-lg" src="https://placehold.co/400x250/E0E0E0/505050?text=Pré-visualização+da+Imagem" alt="Pré-visualização da imagem carregada" onerror="this.onerror=null; this.src='https://placehold.co/400x250/E0E0E0/505050?text=Pré-visualização+da+Imagem'">
+            </div>
+        </div>
+
+        <!-- Seção de Resultado da Placa --><div class="pt-2 space-y-3">
+            <label class="block text-lg font-bold text-gray-800">1. Placa Encontrada (OCR)</label>
+            <div id="plateResultBox" class="min-h-[4rem] p-4 bg-brand-light border-2 border-brand-blue/50 rounded-lg flex items-center justify-center transition duration-300">
+                <p id="plateResult" class="text-3xl font-mono text-gray-800 font-extrabold">Nenhuma imagem carregada.</p>
+            </div>
+            
+            <div id="loadingIndicator" class="hidden text-center text-sm text-brand-blue font-semibold flex items-center justify-center">
+                <svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-brand-blue" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                Processando análise em cascata...
+            </div>
+            <!-- Caixa de Erro/Aviso (agora também usada para duplicatas) -->
+            <div id="errorBox" class="hidden p-3 bg-red-100 text-red-700 rounded-lg text-sm">
+                Ocorreu um erro na análise. Tente novamente ou verifique o console para detalhes.
+            </div>
+        </div>
+        
+        <!-- Seção de Detalhes do Veículo --><div class="pt-4 space-y-4">
+            <div class="space-y-2">
+                <label class="block text-lg font-bold text-gray-800">2. Detalhes do Veículo (Retorno JSON)</label>
+                <div id="vehicleResultBox" class="min-h-[8rem] p-4 bg-gray-800 border-2 border-gray-600 rounded-lg transition duration-300 text-sm text-green-300 font-mono overflow-auto">
+                    <pre id="vehicleResult" class="whitespace-pre-wrap">Aguardando extração da placa...</pre>
+                </div>
+            </div>
+        </div>
+
+        <!-- CAMPO 3: Imagem da Placa Recortada PELA IA --><div class="pt-4 space-y-4">
+            <label class="block text-lg font-bold text-gray-800">3. Imagem da Placa Recortada (pela IA)</label>
+            <div id="generatedPlateImageContainer" class="min-h-[10rem] flex flex-col items-center justify-center bg-gray-100 border-2 border-gray-300 rounded-lg p-4 transition duration-300">
+                <img id="croppedPlateImage" class="max-h-32 object-contain rounded-md border border-gray-200 shadow-md mb-2" src="https://placehold.co/200x80/EEEEEE/555555?text=Placa+Recortada" alt="Imagem da placa recortada" onerror="this.onerror=null; this.src='https://placehold.co/200x80/EEEEEE/555555?text=Placa+Recortada'">
+                <p id="croppedPlateStatus" class="text-sm text-gray-600">Aguardando recorte da placa...</p>
+                <div id="imageCroppingLoading" class="hidden text-center text-sm text-brand-blue font-semibold flex items-center justify-center mt-2">
+                    <svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-brand-blue" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Recortando imagem da placa (via IA)...
+                </div>
+            </div>
+            
+            <label class="block text-sm font-medium text-gray-700 mt-4">Base64 da Imagem da Placa Recortada</label>
+            <textarea id="croppedPlateBase64" rows="5" class="w-full p-2 bg-gray-50 border border-gray-300 rounded-lg text-xs font-mono text-gray-800 resize-y" readonly>Aguardando Base64 da imagem da placa...</textarea>
+        </div>
+
+    </div>
+
+    <script>
+        // Variáveis globais para configuração da API (MANDATÓRIO)
+        const apiKey = ""; 
+        const apiUrl_Text = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+        const apiUrl_ImageCrop = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent?key=${apiKey}`;
+
+        // Elementos da UI
+        const imageInput = document.getElementById('imageInput');
+        const imagePreview = document.getElementById('imagePreview');
+        const plateResult = document.getElementById('plateResult');
+        const vehicleResult = document.getElementById('vehicleResult');
+        const loadingIndicator = document.getElementById('loadingIndicator');
+        const errorBox = document.getElementById('errorBox');
+        const plateResultBox = document.getElementById('plateResultBox');
+        const vehicleResultBox = document.getElementById('vehicleResultBox');
+        const croppedPlateImage = document.getElementById('croppedPlateImage'); 
+        const croppedPlateBase64 = document.getElementById('croppedPlateBase64'); 
+        const croppedPlateStatus = document.getElementById('croppedPlateStatus'); 
+        const imageCroppingLoading = document.getElementById('imageCroppingLoading'); 
+
+
+        // Estado da aplicação
+        let base64Image = null;
+        let plateText = null; 
+        let originalImageMimeType = null; 
+        
+        // ** NOVO: CACHE DE PLACAS PROCESSADAS (Set para duplicatas) **
+        let processedPlates = new Set();
+
+
+        // JSON Schema para o resultado do OCR
+        const plateDetectionSchema = {
+            type: "OBJECT",
+            properties: {
+                placa: { type: "STRING", description: "O número da placa identificada, ex: 'ABC1234' ou 'JKL5M67'. Se não encontrada, deve ser 'Placa não encontrada'." }
+            },
+            required: ["placa"]
+        };
+
+        // JSON Schema para o resultado dos detalhes do veículo
+        const vehicleDetailsSchema = {
+            type: "OBJECT",
+            properties: {
+                cor: { type: "STRING", description: "Cor predominante do veículo, ex: 'Vermelho' ou 'Branco'." },
+                tipo: { type: "STRING", description: "Tipo de carroceria ou modelo, ex: 'Caminhão Baú', 'Hatchback', 'Sedan'." },
+                marca: { type: "STRING", description: "Marca comercial do veículo, ex: 'Mercedes-Benz', 'Fiat'." },
+                fabricante: { type: "STRING", description: "Fabricante do veículo (pode ser o mesmo que a marca)." },
+                placa_brasil: { type: "STRING", description: "A placa identificada no formato brasileiro (LLLNNNN) ou Mercosul (LLLNLNN)." },
+                placa_mercosul: { type: "STRING", description: "Confirma se o formato da placa é 'Mercosul' ou 'Padrão Antigo'." }
+            },
+            required: ["cor", "tipo", "marca", "placa_brasil", "placa_mercosul"]
+        };
+
+
+        /**
+         * Converte um arquivo File em uma string Base64.
+         */
+        function fileToBase64(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.readAsDataURL(file);
+                reader.onload = () => {
+                    const base64String = reader.result.split(',')[1];
+                    resolve(base64String);
+                };
+                reader.onerror = error => reject(error);
+            });
+        }
+        
+        /**
+         * Pré-visualiza a imagem selecionada, reseta os estados E INICIA A ANÁLISE AUTOMÁTICA.
+         */
+        async function previewImage() {
+            const file = imageInput.files[0];
+            originalImageMimeType = file.type; 
+            
+            // 1. Resetar UI e estados
+            errorBox.classList.add('hidden');
+            // Remove classes de erro/aviso da errorBox
+            errorBox.classList.remove('bg-yellow-100', 'text-yellow-700', 'bg-red-100', 'text-red-700');
+
+            plateResult.textContent = 'Aguardando análise...';
+            vehicleResult.textContent = 'Aguardando extração da placa...';
+            croppedPlateImage.src = "https://placehold.co/200x80/EEEEEE/555555?text=Placa+Recortada"; 
+            croppedPlateBase64.value = 'Aguardando Base64 da imagem da placa...'; 
+            croppedPlateStatus.textContent = 'Aguardando recorte da placa...'; 
+            plateText = null;
+
+            // Resetar estilos de caixa (remove verde, vermelho e AMARELO de duplicata)
+            plateResultBox.classList.remove('border-red-500', 'border-green-500', 'border-yellow-500');
+            plateResultBox.classList.add('border-brand-blue/50');
+            plateResult.classList.remove('text-red-700', 'text-green-700', 'text-yellow-700');
+            plateResult.classList.add('text-gray-800');
+            
+            vehicleResultBox.classList.remove('border-red-500', 'border-green-500');
+            vehicleResultBox.classList.add('border-gray-600');
+            vehicleResult.classList.remove('text-red-300', 'text-green-300');
+            vehicleResult.classList.add('text-green-300');
+
+            if (file) {
+                try {
+                    imagePreview.src = URL.createObjectURL(file);
+                    base64Image = await fileToBase64(file);
+                    
+                    // 2. Iniciar a análise em cascata
+                    analyzeImage();
+
+                } catch (error) {
+                    console.error("Erro ao processar imagem:", error);
+                    plateResult.textContent = 'Erro ao carregar a imagem.';
+                    base64Image = null;
+                }
+            } else {
+                imagePreview.src = "https://placehold.co/400x250/E0E0E0/505050?text=Pré-visualização+da+Imagem";
+                base64Image = null;
+            }
+        }
+
+        /**
+         * Faz a chamada geral da API do Gemini para TEXTO (Passos 1 e 2).
+         */
+        async function fetchGeminiTextResult(payload, maxRetries = 3, modelName = "gemini-2.5-flash-preview-09-2025") {
+            const currentApiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
+
+            for (let attempt = 0; attempt < maxRetries; attempt++) {
+                try {
+                    const response = await fetch(currentApiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (response.status === 429 && attempt < maxRetries - 1) {
+                        throw new Error("429 Throttling");
+                    }
+
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(`HTTP error! status: ${response.status} - ${errorData.error?.message || 'Unknown error'}`);
+                    }
+
+                    const result = await response.json();
+                    
+                    if (result.candidates?.[0]?.content?.parts?.[0]?.text) {
+                        return result.candidates[0].content.parts[0].text.trim();
+                    } else {
+                        throw new Error("Resposta da IA (Texto) incompleta ou vazia.");
+                    }
+
+                } catch (error) {
+                    console.error(`Tentativa ${attempt + 1} (Texto) falhou:`, error);
+                    if (attempt < maxRetries - 1) {
+                        const delay = Math.pow(2, attempt) * 1000 + (Math.random() * 500); // Backoff + Jitter
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                    } else {
+                        throw new Error("Falha na análise (Texto) após várias tentativas.");
+                    }
+                }
+            }
+            throw new Error("Erro desconhecido na comunicação com a API (Gemini Texto).");
+        }
+
+        /**
+         * Faz a chamada da API do Gemini para IMAGEM (Passo 3: Recorte).
+         */
+        async function fetchGeminiImageResult(payload, maxRetries = 3) {
+            const currentApiUrl = apiUrl_ImageCrop;
+
+            for (let attempt = 0; attempt < maxRetries; attempt++) {
+                try {
+                    const response = await fetch(currentApiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (response.status === 429 && attempt < maxRetries - 1) {
+                        throw new Error("429 Throttling (Imagem)");
+                    }
+
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(`HTTP error (Imagem)! status: ${response.status} - ${errorData.error?.message || 'Unknown error'}`);
+                    }
+
+                    const result = await response.json();
+                    
+                    const base64Data = result?.candidates?.[0]?.content?.parts?.find(p => p.inlineData)?.inlineData?.data;
+
+                    if (base64Data) {
+                        return base64Data;
+                    } else {
+                        throw new Error("Resposta da IA (Imagem) incompleta. A IA não retornou uma imagem recortada.");
+                    }
+
+                } catch (error)
+                 {
+                    console.error(`Tentativa ${attempt + 1} (Imagem) falhou:`, error);
+                    if (attempt < maxRetries - 1) {
+                        const delay = Math.pow(2, attempt) * 1000 + (Math.random() * 500); 
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                    } else {
+                        throw new Error("Falha na análise (Recorte de Imagem) após várias tentativas.");
+                    }
+                }
+            }
+            throw new Error("Erro desconhecido na comunicação com a API (Gemini Imagem).");
+        }
+
+
+        /**
+         * FUNÇÃO 3: RECORTE (Baseada no seu código)
+         */
+        async function cropPlateImage(plate) {
+            croppedPlateImage.src = "https://placehold.co/200x80/EEEEEE/555555?text=Recortando...";
+            croppedPlateBase64.value = 'Recortando imagem da placa (via IA)...';
+            croppedPlateStatus.textContent = 'Recortando imagem da placa (via IA)...';
+            imageCroppingLoading.classList.remove('hidden');
+
+            if (plate === 'Placa não encontrada' || plate === 'Erro de Processamento.' || !plate) {
+                croppedPlateImage.src = "https://placehold.co/200x80/FF0000/FFFFFF?text=Placa+Não+Recortada";
+                croppedPlateBase64.value = 'Não foi possível recortar a imagem da placa (placa não encontrada no Passo 1).';
+                croppedPlateStatus.textContent = 'Não foi possível recortar a imagem (placa não encontrada).';
+                imageCroppingLoading.classList.add('hidden');
+                return;
+            }
+
+            try {
+                const systemPrompt = "Você é uma ferramenta de detecção e corte de placas veiculares. Sua tarefa é analisar a imagem, detectar **APENAS a placa veicular principal e mais proeminente** e gerar uma nova imagem contendo *somente* essa placa recortada. O corte deve ser o mais preciso e limpo possível. Retorne APENAS a imagem gerada, sem nenhum texto adicional.";
+                const userQuery = "Recorte a placa veicular desta imagem. Priorize uma única placa.";
+
+                const payload = {
+                    contents: [{
+                        parts: [
+                            { text: userQuery },
+                            {
+                                inlineData: {
+                                    mimeType: originalImageMimeType,
+                                    data: base64Image 
+                                }
+                            }
+                        ]
+                    }],
+                    generationConfig: {
+                        responseModalities: ['TEXT', 'IMAGE'] 
+                    },
+                    systemInstruction: {
+                        parts: [{ text: systemPrompt }]
+                    }
+                };
+
+                const croppedBase64 = await fetchGeminiImageResult(payload);
+
+                if (croppedBase64) {
+                    croppedPlateImage.src = `data:${originalImageMimeType};base64,${croppedBase64}`;
+                    croppedPlateBase64.value = croppedBase64;
+                    croppedPlateStatus.textContent = `Placa "${plate}" recortada com sucesso pela IA.`;
+                } else {
+                    throw new Error("A IA não retornou dados de imagem válidos.");
+                }
+
+            } catch (error) {
+                console.error("Erro ao recortar imagem da placa (IA):", error);
+                croppedPlateImage.src = "https://placehold.co/200x80/FF0000/FFFFFF?text=Erro+Recortar+Placa";
+                croppedPlateBase64.value = `Erro ao recortar a imagem da placa (IA): ${error.message}`;
+                croppedPlateStatus.textContent = `Erro ao recortar a imagem da placa (IA).`;
+            } finally {
+                imageCroppingLoading.classList.add('hidden');
+            }
+        }
+
+
+        /**
+         * FUNÇÃO 2: Analisa a imagem e preenche os detalhes do veículo em formato JSON.
+         */
+        async function analyzeVehicleDetails(extractedPlate) { 
+            vehicleResult.textContent = `Analisando detalhes do veículo, usando placa: "${extractedPlate}"...`;
+
+            try {
+                const prompt = `Analise a imagem para determinar as características do veículo, como cor predominante, tipo de carroceria (ex: caminhão, carro, SUV), marca e fabricante. Use o valor fornecido para a placa, "${extractedPlate}", para preencher o campo placa_brasil. Se o valor da placa for "Placa não encontrada", use-o no campo placa_brasil e classifique o formato como 'Não Identificada' para o campo placa_mercosul, mas *continue a analisar as características visuais do veículo* (cor, tipo, marca) normalmente. Preencha o JSON estruturado seguindo o esquema.`;
+
+                const payload = {
+                    contents: [
+                        {
+                            role: "user",
+                            parts: [
+                                { text: prompt },
+                                {
+                                    inlineData: {
+                                        mimeType: originalImageMimeType,
+                                        data: base64Image
+                                    }
+                                }
+                            ]
+                        }
+                    ],
+                    generationConfig: {
+                        responseMimeType: "application/json",
+                        responseSchema: vehicleDetailsSchema 
+                    },
+                    systemInstruction: {
+                        parts: [{ text: "Você é um sistema de Visão Computacional de alta precisão especializado em detecção de veículos. Sua única tarefa é retornar um objeto JSON estritamente conforme o esquema fornecido, mesmo que a placa não tenha sido encontrada na primeira etapa de análise." }]
+                    },
+                };
+
+                const jsonString = await fetchGeminiTextResult(payload, 3, "gemini-2.5-flash-preview-09-2025");
+                
+                try {
+                    const parsedJson = JSON.parse(jsonString);
+                    vehicleResult.textContent = JSON.stringify(parsedJson, null, 4);
+                    vehicleResultBox.classList.remove('border-gray-600', 'border-red-500');
+                    vehicleResultBox.classList.add('border-green-500');
+                    
+                } catch (e) {
+                    vehicleResult.textContent = "Erro: A IA não retornou um JSON válido para detalhes. Resposta bruta: " + jsonString;
+                    vehicleResultBox.classList.remove('border-gray-600', 'border-green-500');
+                    vehicleResultBox.classList.add('border-red-500');
+                    vehicleResult.classList.remove('text-green-300');
+                    vehicleResult.classList.add('text-red-300');
+                    throw new Error("Resposta da IA não é um JSON válido para detalhes do veículo.");
+                }
+
+                // PASSO 3: CHAMA O RECORTE DA IMAGEM DA PLACA
+                await cropPlateImage(extractedPlate);
+
+
+            } catch (error) {
+                    console.error("Erro na análise dos detalhes do veículo:", error);
+                    vehicleResult.textContent = `Erro de Processamento: ${error.message}`;
+                    vehicleResultBox.classList.remove('border-gray-600', 'border-green-500');
+                    vehicleResultBox.classList.add('border-red-500');
+                    vehicleResult.classList.remove('text-green-300');
+                    vehicleResult.classList.add('text-red-300');
+
+                    cropPlateImage(extractedPlate); 
+                }
+        }
+
+
+        /**
+         * FUNÇÃO 1: Extrai a placa (APENAS TEXTO) e verifica duplicatas.
+         */
+        async function analyzeImage() {
+            if (!base64Image) return;
+
+            // Inicia o indicador de loading
+            plateResult.textContent = 'Extraindo texto da placa (OCR)...';
+            vehicleResult.textContent = 'Aguardando extração da placa...';
+            croppedPlateImage.src = "https://placehold.co/200x80/EEEEEE/555555?text=Recortando...";
+            croppedPlateBase64.value = 'Recortando imagem da placa...';
+            croppedPlateStatus.textContent = 'Recortando imagem da placa...';
+            loadingIndicator.classList.remove('hidden');
+
+            let finalPlateText = 'Placa não encontrada';
+
+            try {
+                const prompt = "Analise esta imagem de um veículo e identifique o texto da placa. Retorne apenas o número da placa. Se a placa não for visível ou detectável, retorne 'Placa não encontrada'. Preencha o JSON estritamente conforme o esquema.";
+                
+                const payload = {
+                    contents: [
+                        { role: "user", parts: [{ text: prompt }, { inlineData: { mimeType: originalImageMimeType, data: base64Image }}]}
+                    ],
+                    generationConfig: { 
+                        responseMimeType: "application/json", 
+                        responseSchema: plateDetectionSchema 
+                    },
+                    systemInstruction: { 
+                        parts: [{ text: "Você é um modelo de OCR (Reconhecimento Óptico de Caracteres). Sua única tarefa é ler o texto da placa e retornar o JSON. NÃO adicione texto fora do JSON." }] 
+                    },
+                };
+                
+                const jsonPlateDetection = await fetchGeminiTextResult(payload, 3, "gemini-2.5-flash-preview-09-2025");
+                const parsedPlateDetection = JSON.parse(jsonPlateDetection);
+                
+                finalPlateText = parsedPlateDetection.placa;
+                
+            } catch (error) {
+                console.error("Erro na extração da placa (Texto):", error);
+                finalPlateText = 'Erro de Processamento.';
+            }
+            
+            plateText = finalPlateText; 
+            
+            const plateFound = plateText !== 'Placa não encontrada' && plateText !== 'Erro de Processamento.';
+            
+            // ** NOVO: VERIFICAÇÃO DE DUPLICATA **
+            if (plateFound && processedPlates.has(plateText)) {
+                // É UMA DUPLICATA!
+                plateResult.textContent = plateText + " (DUPLICADA)";
+                
+                // Estiliza como Aviso (Amarelo)
+                plateResultBox.classList.remove('border-green-500', 'border-red-500', 'border-brand-blue/50');
+                plateResult.classList.remove('text-green-700', 'text-red-700', 'text-gray-800');
+                plateResultBox.classList.add('border-yellow-500');
+                plateResult.classList.add('text-yellow-700', 'font-extrabold');
+
+                // Mostra aviso na caixa de erro
+                errorBox.textContent = `Atenção: A placa "${plateText}" já foi processada nesta sessão. O processamento foi interrompido.`;
+                errorBox.classList.remove('hidden');
+                errorBox.classList.add('bg-yellow-100', 'text-yellow-700');
+                errorBox.classList.remove('bg-red-100', 'text-red-700');
+
+                // Limpa os campos seguintes e para o loading
+                vehicleResult.textContent = 'Análise interrompida (placa duplicada).';
+                croppedPlateStatus.textContent = 'Análise interrompida (placa duplicada).';
+                croppedPlateBase64.value = 'Análise interrompida (placa duplicada).';
+                croppedPlateImage.src = "https://placehold.co/200x80/EEEEEE/555555?text=Duplicada";
+                imageCroppingLoading.classList.add('hidden');
+                loadingIndicator.classList.add('hidden');
+                
+                return; // Interrompe a cascata
+            }
+            // ** FIM DA VERIFICAÇÃO **
+
+
+            // Se não for duplicata, continua normal...
+            plateResult.textContent = plateText;
+
+            plateResultBox.classList.remove('border-red-500', 'border-green-500', 'border-yellow-500', 'border-brand-blue/50');
+            plateResult.classList.remove('text-red-700', 'text-green-700', 'text-yellow-700');
+            
+            if (plateFound) {
+                plateResultBox.classList.add('border-green-500');
+                plateResult.classList.add('text-green-700', 'font-extrabold');
+                
+                // ** NOVO: Adiciona ao cache se for válida e nova **
+                processedPlates.add(plateText); 
+                
+            } else {
+                plateResultBox.classList.add('border-red-500');
+                plateResult.classList.add('text-red-700');
+            }
+            
+            // PASSO 2: Chama a análise de detalhes do veículo
+            try {
+                await analyzeVehicleDetails(plateText);
+            } catch (error) {
+                console.error("Erro na análise de detalhes do veículo (Passo 2):", error);
+                errorBox.textContent = `Falha na análise de detalhes: ${error.message}`;
+                errorBox.classList.remove('hidden');
+                errorBox.classList.add('bg-red-100', 'text-red-700'); // Erro real (vermelho)
+                
+                vehicleResult.textContent = 'Análise de detalhes falhou.';
+                vehicleResultBox.classList.remove('border-green-500');
+                vehicleResultBox.classList.add('border-red-500');
+                vehicleResult.classList.remove('text-green-300');
+                vehicleResult.classList.add('text-red-300');
+                
+                await cropPlateImage(plateText);
+            } finally {
+                loadingIndicator.classList.add('hidden');
+            }
+        }
+    </script>
+
+</body>
+</html>
