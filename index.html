@@ -34,7 +34,7 @@
         </h1>
 
         <p class="text-gray-600">
-            Carregue a imagem do veículo e o sistema irá extrair automaticamente a placa, os detalhes do caminhão e mostrará a placa **recortada pela IA**. O sistema também previne o processamento de placas duplicadas na mesma sessão.
+            Carregue a imagem do veículo e o sistema irá extrair automaticamente a placa, os detalhes do caminhão e mostrará a placa **recortada pela IA**.
         </p>
 
         <!-- Seção de Upload e Preview --><div class="space-y-4 border p-4 rounded-xl bg-gray-50">
@@ -126,8 +126,6 @@
         let plateText = null; 
         let originalImageMimeType = null; 
         
-        // ** NOVO: CACHE DE PLACAS PROCESSADAS (Set para duplicatas) **
-        let processedPlates = new Set();
 
 
         // JSON Schema para o resultado do OCR
@@ -485,37 +483,6 @@
             
             const plateFound = plateText !== 'Placa não encontrada' && plateText !== 'Erro de Processamento.';
             
-            // ** NOVO: VERIFICAÇÃO DE DUPLICATA **
-            if (plateFound && processedPlates.has(plateText)) {
-                // É UMA DUPLICATA!
-                plateResult.textContent = plateText + " (DUPLICADA)";
-                
-                // Estiliza como Aviso (Amarelo)
-                plateResultBox.classList.remove('border-green-500', 'border-red-500', 'border-brand-blue/50');
-                plateResult.classList.remove('text-green-700', 'text-red-700', 'text-gray-800');
-                plateResultBox.classList.add('border-yellow-500');
-                plateResult.classList.add('text-yellow-700', 'font-extrabold');
-
-                // Mostra aviso na caixa de erro
-                errorBox.textContent = `Atenção: A placa "${plateText}" já foi processada nesta sessão. O processamento foi interrompido.`;
-                errorBox.classList.remove('hidden');
-                errorBox.classList.add('bg-yellow-100', 'text-yellow-700');
-                errorBox.classList.remove('bg-red-100', 'text-red-700');
-
-                // Limpa os campos seguintes e para o loading
-                vehicleResult.textContent = 'Análise interrompida (placa duplicada).';
-                croppedPlateStatus.textContent = 'Análise interrompida (placa duplicada).';
-                croppedPlateBase64.value = 'Análise interrompida (placa duplicada).';
-                croppedPlateImage.src = "https://placehold.co/200x80/EEEEEE/555555?text=Duplicada";
-                imageCroppingLoading.classList.add('hidden');
-                loadingIndicator.classList.add('hidden');
-                
-                return; // Interrompe a cascata
-            }
-            // ** FIM DA VERIFICAÇÃO **
-
-
-            // Se não for duplicata, continua normal...
             plateResult.textContent = plateText;
 
             plateResultBox.classList.remove('border-red-500', 'border-green-500', 'border-yellow-500', 'border-brand-blue/50');
@@ -524,9 +491,6 @@
             if (plateFound) {
                 plateResultBox.classList.add('border-green-500');
                 plateResult.classList.add('text-green-700', 'font-extrabold');
-                
-                // ** NOVO: Adiciona ao cache se for válida e nova **
-                processedPlates.add(plateText); 
                 
             } else {
                 plateResultBox.classList.add('border-red-500');

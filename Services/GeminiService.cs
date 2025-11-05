@@ -18,6 +18,20 @@ public class GeminiService : IAiService
         _httpClient = httpClient;
         _options = options.Value;
         _logger = logger;
+
+        // Validate API key on service initialization
+        if (string.IsNullOrWhiteSpace(_options.ApiKey))
+        {
+            _logger.LogError("Gemini API Key is missing or empty. Please configure it in appsettings.json");
+            throw new InvalidOperationException("Gemini API Key is not configured. Please set 'Gemini:ApiKey' in appsettings.json or environment variables.");
+        }
+
+        // Basic validation: Gemini API keys typically start with "AIza"
+        if (!_options.ApiKey.StartsWith("AIza", StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogWarning("Gemini API Key format may be incorrect. Expected format: AIza... (Current key starts with: {KeyPrefix})", 
+                _options.ApiKey.Length > 4 ? _options.ApiKey.Substring(0, 4) : "too short");
+        }
     }
 
     public async Task<string> GetPlateTextAsync(string imageBase64, string mimeType, CancellationToken cancellationToken = default)
@@ -206,7 +220,14 @@ public class GeminiService : IAiService
 
     private async Task<string> FetchGeminiTextResultAsync(object payload, string modelName, CancellationToken cancellationToken)
     {
+        if (string.IsNullOrWhiteSpace(_options.ApiKey))
+        {
+            throw new InvalidOperationException("Gemini API Key is not configured. Please set 'Gemini:ApiKey' in appsettings.json");
+        }
+
         var apiUrl = $"{_options.BaseUrl}/{modelName}:generateContent?key={_options.ApiKey}";
+        _logger.LogInformation("Chamando API Gemini Text: {ApiUrl} (key length: {KeyLength})", 
+            apiUrl.Replace(_options.ApiKey, "***"), _options.ApiKey.Length);
 
         for (int attempt = 0; attempt < MaxRetries; attempt++)
         {
@@ -225,7 +246,18 @@ public class GeminiService : IAiService
                 if (!response.IsSuccessStatusCode)
                 {
                     var errorData = await response.Content.ReadAsStringAsync(cancellationToken);
-                    throw new HttpRequestException(errorData);
+                    _logger.LogError("Gemini API error (Text): Status {StatusCode}, Response: {ErrorData}", 
+                        response.StatusCode, errorData);
+                    
+                    // Check for specific permission denied error
+                    if (response.StatusCode == System.Net.HttpStatusCode.Forbidden || 
+                        (errorData.Contains("PERMISSION_DENIED", StringComparison.OrdinalIgnoreCase) ||
+                         errorData.Contains("unregistered callers", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        throw new HttpRequestException($"Gemini API authentication failed. Please verify your API key is valid and has proper permissions. Error: {errorData}");
+                    }
+                    
+                    throw new HttpRequestException($"Gemini API error: {errorData}");
                 }
 
                 var resultJson = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -265,6 +297,11 @@ public class GeminiService : IAiService
 
     private async Task<(string? base64, string? mimeType, string? errorMessage)> FetchGeminiImageResultAsync(object payload, CancellationToken cancellationToken)
     {
+        if (string.IsNullOrWhiteSpace(_options.ApiKey))
+        {
+            return (null, null, "Gemini API Key is not configured. Please set 'Gemini:ApiKey' in appsettings.json");
+        }
+
         var apiUrl = $"{_options.BaseUrl}/{_options.ImageModel}:generateContent?key={_options.ApiKey}";
 
         _logger.LogInformation("Chamando API Gemini Image: modelo {Model}", _options.ImageModel);
@@ -326,7 +363,18 @@ public class GeminiService : IAiService
                 {
                     var errorData = await response.Content.ReadAsStringAsync(cancellationToken);
                     _logger.LogError("HTTP error (Imagem)! status: {StatusCode}, resposta: {ErrorData}", response.StatusCode, errorData);
-                    throw new HttpRequestException(errorData);
+                    
+                    // Check for specific permission denied error
+                    if (response.StatusCode == System.Net.HttpStatusCode.Forbidden || 
+                        (errorData.Contains("PERMISSION_DENIED", StringComparison.OrdinalIgnoreCase) ||
+                         errorData.Contains("unregistered callers", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        var authError = "Gemini API authentication failed. Please verify your API key is valid and has proper permissions.";
+                        _logger.LogError("{AuthError} Error: {ErrorData}", authError, errorData);
+                        return (null, null, $"{authError} Error: {errorData}");
+                    }
+                    
+                    throw new HttpRequestException($"Gemini API error: {errorData}");
                 }
 
                 var resultJson = await response.Content.ReadAsStringAsync(cancellationToken);
