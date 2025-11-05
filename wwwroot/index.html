@@ -232,7 +232,9 @@
                 const provider = document.getElementById('providerSelect').value;
                 // Constrói a URL completa: URL atual + provider + "analyze-plate"
                 const baseUrl = window.location.origin + window.location.pathname;
-                const endpoint = `${baseUrl}/${provider}/analyze-plate`;
+                var endpoint = `${baseUrl}/${provider}/analyze-plate`;
+                endpoint = endpoint.split('//nvidia').join('/nvidia');
+                endpoint = endpoint.split('//gemini').join('/gemini');
 
                 // Faz requisição para a API
                 const response = await fetch(endpoint, {
@@ -254,15 +256,7 @@
                 const result = await response.json();
 
                 // Exibe placa
-                if (result.duplicada) {
-                    plateResult.innerHTML = `
-                        <div class="p-4 bg-yellow-50 border-2 border-yellow-400 rounded-lg">
-                            <p class="text-2xl font-bold text-yellow-800 mb-2">${result.placa}</p>
-                            <p class="text-sm text-yellow-700">⚠️ Placa duplicada - já foi processada nesta sessão</p>
-                        </div>
-                    `;
-                    showStatus(result.erro || 'Esta placa já foi processada anteriormente.', 'warning');
-                } else if (result.placa === 'Placa não encontrada' || result.placa === 'Erro de Processamento.') {
+                if (result.placa === 'Placa não encontrada' || result.placa === 'Erro de Processamento.') {
                     plateResult.innerHTML = `
                         <div class="p-4 bg-red-50 border-2 border-red-400 rounded-lg">
                             <p class="text-xl font-semibold text-red-800">${result.placa}</p>
@@ -299,7 +293,7 @@
                 }
 
                 // Exibe erro se houver
-                if (result.erro && !result.duplicada) {
+                if (result.erro) {
                     showStatus(result.erro, 'warning');
                 }
 

@@ -215,25 +215,6 @@ async Task<IResult> ProcessPlateAnalysis(
 
         var plateFound = plateText != "Placa não encontrada";
 
-        // Verificação de duplicatas
-        if (plateFound && cacheService.IsDuplicate(plateText))
-        {
-            logger.LogWarning("Placa duplicada detectada: {Plate}", plateText);
-            return Results.Ok(new PlateAnalysisResponse
-            {
-                Placa = plateText,
-                Duplicada = true,
-                Erro = $"Atenção: A placa \"{plateText}\" já foi processada nesta sessão. O processamento foi interrompido.",
-                ApiUtilizada = apiUtilizada
-            });
-        }
-
-        // Se não for duplicata, adiciona ao cache
-        if (plateFound)
-        {
-            cacheService.AddPlate(plateText);
-        }
-
         VehicleDetails? vehicleDetails = null;
         CroppedPlateImage? croppedImage = null;
 
