@@ -175,6 +175,7 @@ async Task<IResult> ProcessPlateAnalysis(
         logger.LogInformation("Iniciando extração da placa via OCR...");
         string plateText;
         double? nivelConfianca = null;
+        PlateCoordinates? plateCoordinates = null;
 
         try
         {
@@ -203,6 +204,7 @@ async Task<IResult> ProcessPlateAnalysis(
             var plateResult = JsonSerializer.Deserialize<PlateDetectionResult>(plateJson, jsonOptions);
             plateText = plateResult?.Placa ?? "Placa não encontrada";
             nivelConfianca = plateResult?.NivelConfianca;
+            plateCoordinates = plateResult?.Coordenadas;
         }
         catch (Exception ex)
         {
@@ -245,7 +247,7 @@ async Task<IResult> ProcessPlateAnalysis(
          if (plateFound)
          {
              logger.LogInformation("Recortando imagem da placa: {Plate}", plateText);
-             var (croppedBase64, croppedMimeType, errorMsg) = await aiService.CropPlateImageAsync(normalizedBase64, mimeType, plateText);
+             var (croppedBase64, croppedMimeType, errorMsg) = await aiService.CropPlateImageAsync(normalizedBase64, mimeType, plateText, plateCoordinates);
              
              if (errorMsg != null)
              {
@@ -263,8 +265,8 @@ async Task<IResult> ProcessPlateAnalysis(
              }
              else
              {
-                 logger.LogWarning("Recorte de imagem retornou null sem mensagem de erro");
-                 erroRecorte = "Não foi possível recortar a imagem da placa.";
+                 // Não define erroRecorte quando não há mensagem de erro (API gratuita com recorte local falhou silenciosamente)
+                 logger.LogInformation("Recorte de imagem não disponível (sem erro)");
              }
          }
 

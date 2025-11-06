@@ -9,5 +9,8 @@ public class PlateDetectionResult
 
     [JsonPropertyName("nivelConfianca")]
     public double? NivelConfianca { get; set; }
+
+    [JsonPropertyName("coordenadas")]
+    public PlateCoordinates? Coordenadas { get; set; }
 }
 

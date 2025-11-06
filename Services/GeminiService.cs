@@ -3,6 +3,11 @@ using System.Text.Json;
 using Microsoft.Extensions.Options;
 using PlateAnalysisApi.Configuration;
 using PlateAnalysisApi.Models;
+using System.Drawing;
+using System.Drawing.Imaging;
+using System.Runtime.InteropServices;
+using System.Linq;
+using ImagingEncoder = System.Drawing.Imaging.Encoder;
 
 namespace PlateAnalysisApi.Services;
 
@@ -50,12 +55,25 @@ public class GeminiService : IAiService
                 {
                     type = "NUMBER",
                     description = "Nível de confiança da leitura da placa, um valor entre 0.0 e 1.0, onde 1.0 indica 100% de confiança. Se a placa não foi encontrada, use 0.0."
+                },
+                coordenadas = new
+                {
+                    type = "OBJECT",
+                    description = "Coordenadas normalizadas (0.0 a 1.0) da placa na imagem. Se a placa não foi encontrada, use valores 0.0.",
+                    properties = new
+                    {
+                        x = new { type = "NUMBER", description = "Posição X normalizada (0.0 a 1.0) do canto superior esquerdo da placa." },
+                        y = new { type = "NUMBER", description = "Posição Y normalizada (0.0 a 1.0) do canto superior esquerdo da placa." },
+                        width = new { type = "NUMBER", description = "Largura normalizada (0.0 a 1.0) da placa." },
+                        height = new { type = "NUMBER", description = "Altura normalizada (0.0 a 1.0) da placa." }
+                    },
+                    required = new[] { "x", "y", "width", "height" }
                 }
             },
-            required = new[] { "placa", "nivelConfianca" }
+            required = new[] { "placa", "nivelConfianca", "coordenadas" }
         };
 
-        var prompt = "Analise esta imagem de um veículo e identifique o texto da placa. Retorne o número da placa e o nível de confiança da leitura (0.0 a 1.0). Se a placa não for visível ou detectável, retorne 'Placa não encontrada' com nível de confiança 0.0. Preencha o JSON estritamente conforme o esquema.";
+        var prompt = "Analise esta imagem de um veículo e identifique o texto da placa e sua localização exata na imagem. Retorne o número da placa, o nível de confiança da leitura (0.0 a 1.0) e as coordenadas normalizadas (0.0 a 1.0) da placa na imagem. As coordenadas devem representar um retângulo que contenha a placa completa com margem adequada. Se a placa não for visível ou detectável, retorne 'Placa não encontrada' com nível de confiança 0.0 e coordenadas com valores 0.0. Preencha o JSON estritamente conforme o esquema.";
 
         var payload = new
         {
@@ -156,7 +174,7 @@ public class GeminiService : IAiService
             ?? throw new InvalidOperationException("Resposta da IA não é um JSON válido para detalhes do veículo.");
     }
 
-    public async Task<(string? base64, string? mimeType, string? errorMessage)> CropPlateImageAsync(string imageBase64, string mimeType, string plate, CancellationToken cancellationToken = default)
+    public async Task<(string? base64, string? mimeType, string? errorMessage)> CropPlateImageAsync(string imageBase64, string mimeType, string plate, PlateCoordinates? coordinates = null, CancellationToken cancellationToken = default)
     {
         if (plate == "Placa não encontrada" || plate == "Erro de Processamento." || string.IsNullOrWhiteSpace(plate))
         {
@@ -164,11 +182,36 @@ public class GeminiService : IAiService
         }
 
         // Verifica se a chave está configurada como gratuita
-        // Se sim, retorna erro imediatamente sem tentar processar
+        // Se sim, usa recorte local se coordenadas estiverem disponíveis
         if (_options.IsFreeTier)
         {
-            _logger.LogWarning("Tentativa de recortar imagem com chave gratuita. Operação bloqueada (baseado na configuração IsFreeTier).");
-            return (null, null, "API Gratuita não pode fazer recorte de placa, apenas análise. O recorte de imagem requer um plano pago da API do Google Gemini.");
+            if (coordinates != null && coordinates.Width > 0 && coordinates.Height > 0)
+            {
+                _logger.LogInformation("Usando recorte local (software) para API gratuita, baseado nas coordenadas retornadas pela detecção.");
+                try
+                {
+                    var croppedBase64 = await CropAndEnhanceImageAsync(imageBase64, mimeType, coordinates);
+                    if (croppedBase64 != null)
+                    {
+                        return (croppedBase64, mimeType, null);
+                    }
+                    else
+                    {
+                        _logger.LogWarning("Falha no recorte local, mas não retornando erro para não exibir mensagem na tela");
+                        return (null, null, null); // Retorna null sem erro para não exibir mensagem
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Erro no recorte local, mas não retornando erro para não exibir mensagem na tela");
+                    return (null, null, null); // Retorna null sem erro para não exibir mensagem
+                }
+            }
+            else
+            {
+                _logger.LogWarning("Tentativa de recortar imagem com chave gratuita sem coordenadas disponíveis.");
+                return (null, null, null); // Retorna null sem erro para não exibir mensagem na tela
+            }
         }
 
         var systemPrompt = "Você é uma ferramenta de detecção e corte de placas veiculares. Sua tarefa é analisar a imagem, detectar **APENAS a placa veicular principal e mais proeminente** e gerar uma nova imagem contendo *somente* essa placa recortada. O corte deve ser o mais preciso e limpo possível. Retorne APENAS a imagem gerada, sem nenhum texto adicional.";
@@ -489,6 +532,249 @@ public class GeminiService : IAiService
         }
 
         return (null, null, "Erro desconhecido na comunicação com a API (Gemini Imagem).");
+    }
+
+    private async Task<string?> CropAndEnhanceImageAsync(string imageBase64, string mimeType, PlateCoordinates coordinates)
+    {
+        try
+        {
+            // Decodifica a imagem base64
+            var imageBytes = Convert.FromBase64String(imageBase64);
+            
+            using var ms = new MemoryStream(imageBytes);
+            using var originalImage = Image.FromStream(ms);
+            
+            // Converte coordenadas normalizadas (0.0-1.0) para pixels
+            // Padding inteligente: mais padding horizontal para placas, considerando proporção
+            var paddingHorizontal = 0.15; // 15% de padding horizontal para melhor visualização
+            var paddingVertical = 0.12; // 12% de padding vertical
+            
+            var x = (int)(coordinates.X * originalImage.Width);
+            var y = (int)(coordinates.Y * originalImage.Height);
+            var width = (int)(coordinates.Width * originalImage.Width);
+            var height = (int)(coordinates.Height * originalImage.Height);
+            
+            // Aplica padding inteligente
+            var paddingX = (int)(width * paddingHorizontal);
+            var paddingY = (int)(height * paddingVertical);
+            
+            x = Math.Max(0, x - paddingX);
+            y = Math.Max(0, y - paddingY);
+            width = Math.Min(originalImage.Width - x, width + (paddingX * 2));
+            height = Math.Min(originalImage.Height - y, height + (paddingY * 2));
+            
+            // Garante dimensões mínimas adequadas para placas
+            var minWidth = 100;
+            var minHeight = 40;
+            if (width < minWidth) width = Math.Min(minWidth, originalImage.Width - x);
+            if (height < minHeight) height = Math.Min(minHeight, originalImage.Height - y);
+            
+            // Cria o retângulo de recorte
+            var cropRect = new Rectangle(x, y, width, height);
+            
+            // Configuração de zoom: aumenta o tamanho da imagem recortada para melhor visualização
+            var zoomFactor = 2.5; // Zoom de 2.5x para melhor legibilidade
+            var targetWidth = (int)(width * zoomFactor);
+            var targetHeight = (int)(height * zoomFactor);
+            
+            // Garante que o zoom não ultrapassa limites razoáveis (máximo 1200px de largura)
+            var maxWidth = 1200;
+            if (targetWidth > maxWidth)
+            {
+                zoomFactor = (double)maxWidth / width;
+                targetWidth = maxWidth;
+                targetHeight = (int)(height * zoomFactor);
+            }
+            
+            // Recorta e aplica zoom com alta qualidade
+            Bitmap croppedBitmap;
+            using (var tempBitmap = new Bitmap(targetWidth, targetHeight))
+            {
+                using (var g = Graphics.FromImage(tempBitmap))
+                {
+                    // Configurações de alta qualidade para melhor resultado
+                    g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                    g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
+                    g.CompositingQuality = System.Drawing.Drawing2D.CompositingQuality.HighQuality;
+                    g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.HighQuality;
+                    
+                    // Desenha a imagem recortada com zoom
+                    g.DrawImage(originalImage, new Rectangle(0, 0, targetWidth, targetHeight), cropRect, GraphicsUnit.Pixel);
+                }
+                
+                // Aplica sharpening leve para melhorar a nitidez após o zoom
+                croppedBitmap = ApplySharpening(tempBitmap);
+            }
+            
+            // Converte para base64 com alta qualidade
+            using var outputMs = new MemoryStream();
+            using (croppedBitmap)
+            {
+                var imageFormat = mimeType.ToLowerInvariant() switch
+                {
+                    "image/png" => ImageFormat.Png,
+                    "image/gif" => ImageFormat.Gif,
+                    "image/webp" => ImageFormat.Webp,
+                    _ => ImageFormat.Jpeg
+                };
+                
+                // Configuração de qualidade para JPEG
+                if (imageFormat == ImageFormat.Jpeg)
+                {
+                    var encoderParams = new EncoderParameters(1);
+                    encoderParams.Param[0] = new EncoderParameter(ImagingEncoder.Quality, 95L); // Alta qualidade (95%)
+                    var jpegCodec = ImageCodecInfo.GetImageEncoders()
+                        .FirstOrDefault(c => c.FormatID == ImageFormat.Jpeg.Guid);
+                    if (jpegCodec != null)
+                    {
+                        croppedBitmap.Save(outputMs, jpegCodec, encoderParams);
+                    }
+                    else
+                    {
+                        croppedBitmap.Save(outputMs, imageFormat);
+                    }
+                }
+                else
+                {
+                    croppedBitmap.Save(outputMs, imageFormat);
+                }
+            }
+            
+            var croppedBytes = outputMs.ToArray();
+            
+            _logger.LogInformation("Imagem recortada e ampliada: {OriginalWidth}x{OriginalHeight} -> {TargetWidth}x{TargetHeight} (zoom {ZoomFactor}x)", 
+                width, height, targetWidth, targetHeight, zoomFactor);
+            
+            return Convert.ToBase64String(croppedBytes);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Erro ao recortar e aplicar zoom na imagem");
+            return null;
+        }
+    }
+    
+    private Bitmap ApplySharpening(Bitmap bitmap)
+    {
+        // Aplica um filtro de sharpening leve para melhorar a nitidez após o zoom
+        // Usa LockBits com Marshal para melhor performance sem código unsafe
+        try
+        {
+            var sharpened = new Bitmap(bitmap.Width, bitmap.Height);
+            
+            // Kernel de sharpening leve (unsharp mask)
+            float[,] kernel = {
+                { 0, -0.1f, 0 },
+                { -0.1f, 1.4f, -0.1f },
+                { 0, -0.1f, 0 }
+            };
+            
+            // Usa LockBits para acesso direto à memória (muito mais rápido que GetPixel/SetPixel)
+            var bitmapData = bitmap.LockBits(
+                new Rectangle(0, 0, bitmap.Width, bitmap.Height),
+                ImageLockMode.ReadOnly,
+                PixelFormat.Format32bppArgb);
+            
+            var sharpenedData = sharpened.LockBits(
+                new Rectangle(0, 0, sharpened.Width, sharpened.Height),
+                ImageLockMode.WriteOnly,
+                PixelFormat.Format32bppArgb);
+            
+            try
+            {
+                // Copia os dados da imagem original para array gerenciado
+                int bytes = Math.Abs(bitmapData.Stride) * bitmap.Height;
+                byte[] sourceRgbaValues = new byte[bytes];
+                Marshal.Copy(bitmapData.Scan0, sourceRgbaValues, 0, bytes);
+                
+                // Cria array para a imagem resultante
+                byte[] destRgbaValues = new byte[bytes];
+                
+                int stride = bitmapData.Stride;
+                
+                // Aplica o kernel de sharpening
+                for (int y = 1; y < bitmap.Height - 1; y++)
+                {
+                    for (int x = 1; x < bitmap.Width - 1; x++)
+                    {
+                        float r = 0, g = 0, b = 0;
+                        
+                        for (int i = -1; i <= 1; i++)
+                        {
+                            for (int j = -1; j <= 1; j++)
+                            {
+                                int offsetX = x + i;
+                                int offsetY = y + j;
+                                int index = (offsetY * stride) + (offsetX * 4);
+                                
+                                float weight = kernel[i + 1, j + 1];
+                                b += sourceRgbaValues[index] * weight;     // B
+                                g += sourceRgbaValues[index + 1] * weight; // G
+                                r += sourceRgbaValues[index + 2] * weight; // R
+                            }
+                        }
+                        
+                        r = Math.Max(0, Math.Min(255, r));
+                        g = Math.Max(0, Math.Min(255, g));
+                        b = Math.Max(0, Math.Min(255, b));
+                        
+                        int destIndex = (y * stride) + (x * 4);
+                        destRgbaValues[destIndex] = (byte)b;     // B
+                        destRgbaValues[destIndex + 1] = (byte)g; // G
+                        destRgbaValues[destIndex + 2] = (byte)r; // R
+                        destRgbaValues[destIndex + 3] = sourceRgbaValues[destIndex + 3]; // A (preserva alpha)
+                    }
+                }
+                
+                // Copia bordas sem processamento
+                for (int y = 0; y < bitmap.Height; y++)
+                {
+                    if (y == 0 || y == bitmap.Height - 1)
+                    {
+                        for (int x = 0; x < bitmap.Width; x++)
+                        {
+                            int index = (y * stride) + (x * 4);
+                            destRgbaValues[index] = sourceRgbaValues[index];
+                            destRgbaValues[index + 1] = sourceRgbaValues[index + 1];
+                            destRgbaValues[index + 2] = sourceRgbaValues[index + 2];
+                            destRgbaValues[index + 3] = sourceRgbaValues[index + 3];
+                        }
+                    }
+                    else
+                    {
+                        // Borda esquerda
+                        int leftIndex = y * stride;
+                        destRgbaValues[leftIndex] = sourceRgbaValues[leftIndex];
+                        destRgbaValues[leftIndex + 1] = sourceRgbaValues[leftIndex + 1];
+                        destRgbaValues[leftIndex + 2] = sourceRgbaValues[leftIndex + 2];
+                        destRgbaValues[leftIndex + 3] = sourceRgbaValues[leftIndex + 3];
+                        
+                        // Borda direita
+                        int rightIndex = (y * stride) + ((bitmap.Width - 1) * 4);
+                        destRgbaValues[rightIndex] = sourceRgbaValues[rightIndex];
+                        destRgbaValues[rightIndex + 1] = sourceRgbaValues[rightIndex + 1];
+                        destRgbaValues[rightIndex + 2] = sourceRgbaValues[rightIndex + 2];
+                        destRgbaValues[rightIndex + 3] = sourceRgbaValues[rightIndex + 3];
+                    }
+                }
+                
+                // Copia os dados processados de volta para a imagem
+                Marshal.Copy(destRgbaValues, 0, sharpenedData.Scan0, bytes);
+            }
+            finally
+            {
+                bitmap.UnlockBits(bitmapData);
+                sharpened.UnlockBits(sharpenedData);
+            }
+            
+            return sharpened;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Erro ao aplicar sharpening, retornando imagem original: {Message}", ex.Message);
+            // Se o sharpening falhar, retorna a imagem original
+            return bitmap;
+        }
     }
 
 }

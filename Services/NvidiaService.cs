@@ -154,7 +154,7 @@ public class NvidiaService : IAiService
         }
     }
 
-    public async Task<(string? base64, string? mimeType, string? errorMessage)> CropPlateImageAsync(string imageBase64, string mimeType, string plate, CancellationToken cancellationToken = default)
+    public async Task<(string? base64, string? mimeType, string? errorMessage)> CropPlateImageAsync(string imageBase64, string mimeType, string plate, PlateCoordinates? coordinates = null, CancellationToken cancellationToken = default)
     {
         if (plate == "Placa não encontrada" || plate == "Erro de Processamento." || string.IsNullOrWhiteSpace(plate))
         {
@@ -165,10 +165,20 @@ public class NvidiaService : IAiService
         {
             _logger.LogInformation("Iniciando processo de criação de imagem em zoom da placa via API NVIDIA...");
             
-            // Passo 1: Obter coordenadas precisas da placa via API NVIDIA com prompt melhorado
-            var coordinates = await GetPlateCoordinatesAsync(imageBase64, mimeType, plate, cancellationToken);
+            // Passo 1: Usar coordenadas passadas se disponíveis, caso contrário obter via API
+            PlateCoordinates? plateCoordinates = coordinates;
+            if (plateCoordinates == null)
+            {
+                _logger.LogInformation("Coordenadas não fornecidas, obtendo via API NVIDIA...");
+                plateCoordinates = await GetPlateCoordinatesAsync(imageBase64, mimeType, plate, cancellationToken);
+            }
+            else
+            {
+                _logger.LogInformation("Usando coordenadas fornecidas: x={X}, y={Y}, width={Width}, height={Height}", 
+                    plateCoordinates.X, plateCoordinates.Y, plateCoordinates.Width, plateCoordinates.Height);
+            }
             
-            if (coordinates == null)
+            if (plateCoordinates == null)
             {
                 _logger.LogWarning("Não foi possível obter coordenadas da placa via API NVIDIA. Tentando recorte alternativo...");
                 // Fallback: tenta recortar uma região central inferior da imagem (onde geralmente ficam as placas)
@@ -177,9 +187,9 @@ public class NvidiaService : IAiService
 
             // Passo 2: Recortar e aplicar zoom/enhancement na imagem usando as coordenadas
             _logger.LogInformation("Recortando e aplicando zoom na imagem usando coordenadas: x={X}, y={Y}, width={Width}, height={Height}", 
-                coordinates.X, coordinates.Y, coordinates.Width, coordinates.Height);
+                plateCoordinates.X, plateCoordinates.Y, plateCoordinates.Width, plateCoordinates.Height);
             
-            var croppedImageBase64 = await CropAndEnhanceImageAsync(imageBase64, mimeType, coordinates);
+            var croppedImageBase64 = await CropAndEnhanceImageAsync(imageBase64, mimeType, plateCoordinates);
             
             if (string.IsNullOrEmpty(croppedImageBase64))
             {
